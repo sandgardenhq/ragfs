@@ -1,3 +1,16 @@
+// Package ragfs provides a filesystem interface for mapping path patterns to custom handlers.
+// It implements the fs.FS interface, allowing LLM agents and applications to interact with
+// data sources (APIs, databases) using familiar filesystem operations.
+//
+// Example usage:
+//
+//	fsys := ragfs.New()
+//	fsys.Map("/emails/{date}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+//	    // Fetch emails for the given date
+//	    emails := fetchEmails(params["date"])
+//	    return emails, nil
+//	})
+//	f, _ := fsys.Open("/emails/2025-10-07")
 package ragfs
 
 import (
@@ -13,10 +26,12 @@ import (
 type Handler func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error)
 
 // FS is a filesystem that maps path patterns to handlers.
+// It implements the fs.FS interface from the standard library.
 type FS struct {
 	routes []route
 }
 
+// route represents a pattern-to-handler mapping.
 type route struct {
 	pattern string
 	handler Handler
@@ -30,6 +45,8 @@ func New() *FS {
 }
 
 // Map registers a handler for the given path pattern.
+// Patterns can include parameters in curly braces, e.g., "/emails/{date}".
+// When a path is accessed, the first matching pattern's handler is called.
 func (f *FS) Map(pattern string, handler Handler) error {
 	f.routes = append(f.routes, route{
 		pattern: pattern,
@@ -38,7 +55,10 @@ func (f *FS) Map(pattern string, handler Handler) error {
 	return nil
 }
 
-// Open opens the named file.
+// Open opens the named file, implementing fs.FS.
+// It matches the path against registered patterns, calls the matching handler,
+// and returns a file containing the handler's response.
+// Returns fs.ErrNotExist if no pattern matches.
 func (f *FS) Open(name string) (fs.File, error) {
 	// Find matching route with pattern matching
 	var handler Handler
@@ -88,6 +108,7 @@ type file struct {
 	reader *bytes.Reader
 }
 
+// Stat returns file information.
 func (f *file) Stat() (fs.FileInfo, error) {
 	return &fileInfo{
 		name: f.name,
@@ -95,10 +116,12 @@ func (f *file) Stat() (fs.FileInfo, error) {
 	}, nil
 }
 
+// Read reads up to len(p) bytes into p.
 func (f *file) Read(p []byte) (int, error) {
 	return f.reader.Read(p)
 }
 
+// Close closes the file.
 func (f *file) Close() error {
 	return nil
 }
@@ -109,12 +132,23 @@ type fileInfo struct {
 	size int64
 }
 
-func (i *fileInfo) Name() string       { return i.name }
-func (i *fileInfo) Size() int64        { return i.size }
-func (i *fileInfo) Mode() fs.FileMode  { return 0444 }
+// Name returns the base name of the file.
+func (i *fileInfo) Name() string { return i.name }
+
+// Size returns the length in bytes.
+func (i *fileInfo) Size() int64 { return i.size }
+
+// Mode returns the file mode bits (always 0444 for read-only).
+func (i *fileInfo) Mode() fs.FileMode { return 0444 }
+
+// ModTime returns the modification time (always zero value).
 func (i *fileInfo) ModTime() time.Time { return time.Time{} }
-func (i *fileInfo) IsDir() bool        { return false }
-func (i *fileInfo) Sys() any           { return nil }
+
+// IsDir returns whether this is a directory (always false).
+func (i *fileInfo) IsDir() bool { return false }
+
+// Sys returns underlying data source (always nil).
+func (i *fileInfo) Sys() any { return nil }
 
 // matchPattern matches a path against a pattern and extracts parameters.
 // Pattern format: /emails/{date} matches /emails/2025-10-07 and extracts date=2025-10-07

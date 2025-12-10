@@ -1,0 +1,18 @@
+{
+  "app": {
+    "name": "MyApp",
+    "version": "1.0.0",
+    "port": 8080
+  },
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "name": "mydb",
+    "user": "admin"
+  },
+  "features": {
+    "auth": true,
+    "logging": true,
+    "metrics": false
+  }
+}
