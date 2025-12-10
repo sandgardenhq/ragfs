@@ -45,3 +45,6 @@ htmlcov/
 *.log
 ragfs-mount
 
+# Worktrees
+.worktrees/
+
