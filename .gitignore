@@ -1,29 +1,29 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
+# Go
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
 *.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+*.dylib
 
-# Virtual environments
-venv/
-ENV/
-env/
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Dependency directories
+vendor/
+
+# Build output
+bin/
+dist/
 
 # IDEs
 .vscode/
