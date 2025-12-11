@@ -31,14 +31,14 @@ sudo pacman -S fuse2
 
 ## Building the FUSE Mount Program
 
-The example mount program is located in `cmd/ragfs-mount/`:
+The example mount program is located in `examples/mount/`:
 
 ```bash
 # Build the mount program
-go build -o ragfs-mount ./cmd/ragfs-mount
+go build -o ragfs-mount ./examples/mount
 
 # Or install it to your $GOPATH/bin
-go install ./cmd/ragfs-mount
+go install ./examples/mount
 ```
 
 ## Using the Example Mount Program
@@ -256,7 +256,7 @@ launchctl load ~/Library/LaunchAgents/com.ragfs.mount.plist
 For easier distribution, compile as a static binary:
 
 ```bash
-CGO_ENABLED=1 go build -ldflags '-s -w -extldflags "-static"' -o ragfs-mount ./cmd/ragfs-mount
+CGO_ENABLED=1 go build -ldflags '-s -w -extldflags "-static"' -o ragfs-mount ./examples/mount
 ```
 
 ### Cross-Compilation
@@ -265,7 +265,7 @@ Note: FUSE requires CGO, so cross-compilation is more complex:
 
 ```bash
 # For Linux from macOS (requires cross-compiler)
-GOOS=linux GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-linux-gnu-gcc go build -o ragfs-mount-linux ./cmd/ragfs-mount
+GOOS=linux GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-linux-gnu-gcc go build -o ragfs-mount-linux ./examples/mount
 ```
 
 ## Debugging
@@ -347,7 +347,7 @@ Check your handler patterns match the requested paths. Enable debug mode to see 
 
 ## Next Steps
 
-- Review the example mount program in `cmd/ragfs-mount/main.go`
-- Check out `example.go` for handler patterns
+- Review the example mount program in `examples/mount/main.go`
+- Check out `examples_test.go` for handler patterns
 - Read `CLAUDE.md` for development guidelines
 - See `README.md` for general library usage

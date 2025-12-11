@@ -63,9 +63,8 @@ go test -v -cover
 - `ragfs.go` - Core library implementation
 - `fuse.go` - FUSE bridge implementation
 - `ragfs_test.go` - Unit tests for core functionality
-- `examples_test.go` - Example implementations and integration tests
-- `example.go` - Standalone example with documentation
-- `cmd/ragfs-mount/` - Example FUSE mount program
+- `examples_test.go` - Example test functions and integration tests
+- `examples/mount/` - FUSE mount example program
 - `FUSE.md` - Complete FUSE integration guide
 
 ## Common Development Tasks

@@ -103,7 +103,7 @@ Mount ragfs as a real filesystem:
 
 ```bash
 # Build the mount program
-go build -o ragfs-mount ./cmd/ragfs-mount
+go build -o ragfs-mount ./examples/mount
 
 # Create mount point
 mkdir /tmp/ragfs
@@ -120,7 +120,7 @@ See [FUSE.md](FUSE.md) for complete installation and usage instructions.
 
 ## Examples
 
-See `example.go` for complete examples including:
+See `examples_test.go` for complete examples including:
 - Mapping paths to JSON data
 - Email retrieval with date parameters
 - Nested JSON structure navigation
