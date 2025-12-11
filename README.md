@@ -54,7 +54,7 @@ func main() {
 }
 ```
 
-## Use Cases
+## Example Use Cases
 
 ### JSON Configuration Access
 
@@ -158,4 +158,4 @@ See `CLAUDE.md` for detailed development guidelines.
 
 ## License
 
-MIT
+MIT - See [LICENSE](LICENSE) for details.
