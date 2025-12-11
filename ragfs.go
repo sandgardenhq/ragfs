@@ -30,6 +30,7 @@ type Handler func(ctx context.Context, path string, params map[string]string) ([
 // It implements the fs.FS interface from the standard library.
 type FS struct {
 	routes []route
+	cache  *Cache // nil if caching is disabled
 }
 
 // route represents a pattern-to-handler mapping.
@@ -87,6 +88,7 @@ func (f *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 // Open opens the named file, implementing fs.FS.
 // It matches the path against registered patterns, calls the matching handler,
 // and returns a file containing the handler's response.
+// If caching is enabled, results are cached for subsequent calls.
 // Returns fs.ErrNotExist if no pattern matches.
 func (f *FS) Open(name string) (fs.File, error) {
 	// Find matching route with pattern matching
@@ -105,10 +107,25 @@ func (f *FS) Open(name string) (fs.File, error) {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 	}
 
-	// Call the handler to get entries
-	entries, err := handler(context.Background(), name, params)
-	if err != nil {
-		return nil, err
+	// Layer 1: Check handler cache
+	var entries []fs.DirEntry
+	var err error
+
+	if f.cache != nil {
+		entries = f.cache.getHandler(name)
+	}
+
+	if entries == nil {
+		// Cache miss - call the handler
+		entries, err = handler(context.Background(), name, params)
+		if err != nil {
+			return nil, err
+		}
+
+		// Cache the result
+		if f.cache != nil {
+			f.cache.setHandler(name, entries)
+		}
 	}
 
 	if len(entries) == 0 {
@@ -136,9 +153,26 @@ func (f *FS) Open(name string) (fs.File, error) {
 
 	// It's a file - get content
 	if ce, ok := entry.(interface{ Content() []byte }); ok {
+		// Layer 2: Check content cache
+		var content []byte
+
+		if f.cache != nil {
+			content = f.cache.getContent(name)
+		}
+
+		if content == nil {
+			// Cache miss - extract content
+			content = ce.Content()
+
+			// Cache the content
+			if f.cache != nil {
+				f.cache.setContent(name, content)
+			}
+		}
+
 		return &file{
 			name:   entry.Name(),
-			reader: bytes.NewReader(ce.Content()),
+			reader: bytes.NewReader(content),
 		}, nil
 	}
 
@@ -302,4 +336,90 @@ func matchPattern(pattern, path string) (bool, map[string]string) {
 	}
 
 	return true, params
+}
+
+// EnableCache enables caching for this filesystem with the given configuration.
+// Caching is opt-in and disabled by default. Once enabled, all filesystem operations
+// will use the cache. Use default config values by passing CacheConfig{} for sensible defaults.
+//
+// Default values:
+//   - MaxEntries: 1000 (per cache layer)
+//   - TTL: 30 seconds
+//
+// Example:
+//
+//	fsys := ragfs.New()
+//	fsys.EnableCache(ragfs.CacheConfig{
+//	    MaxEntries: 500,
+//	    TTL:        60 * time.Second,
+//	})
+func (f *FS) EnableCache(config CacheConfig) {
+	// Apply defaults if not specified
+	if config.MaxEntries == 0 {
+		config.MaxEntries = 1000
+	}
+	if config.TTL == 0 {
+		config.TTL = 30 * time.Second
+	}
+
+	f.cache = newCache(config)
+}
+
+// Invalidate removes a specific path from the cache.
+// Both handler results and file content caches are invalidated for the given path.
+// Returns an error if the path is empty.
+//
+// Example:
+//
+//	// After updating user data externally
+//	fsys.Invalidate("/users/123")
+func (f *FS) Invalidate(path string) error {
+	if path == "" {
+		return &fs.PathError{Op: "invalidate", Path: path, Err: fs.ErrInvalid}
+	}
+
+	if f.cache != nil {
+		f.cache.invalidate(path)
+	}
+
+	return nil
+}
+
+// InvalidatePrefix removes all cached entries whose paths start with the given prefix.
+// This is useful for invalidating entire directory trees or all entries matching a pattern.
+// Returns an error if the prefix is empty.
+//
+// Example:
+//
+//	// Invalidate all users
+//	fsys.InvalidatePrefix("/users/")
+//
+//	// Invalidate everything
+//	fsys.InvalidatePrefix("/")
+func (f *FS) InvalidatePrefix(prefix string) error {
+	if prefix == "" {
+		return &fs.PathError{Op: "invalidate_prefix", Path: prefix, Err: fs.ErrInvalid}
+	}
+
+	if f.cache != nil {
+		f.cache.invalidatePrefix(prefix)
+	}
+
+	return nil
+}
+
+// Stats returns current cache statistics.
+// Returns zero values if caching is disabled.
+//
+// Example:
+//
+//	stats := fsys.Stats()
+//	hitRate := float64(stats.Hits.Load()) / float64(stats.Hits.Load() + stats.Misses.Load())
+//	fmt.Printf("Cache hit rate: %.2f%%\n", hitRate*100)
+func (f *FS) Stats() CacheStats {
+	if f.cache == nil {
+		return CacheStats{}
+	}
+
+	return *f.cache.stats
 }
