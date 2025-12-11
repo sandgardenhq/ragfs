@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/brittcrawford/ragfs"
 )
@@ -287,4 +288,143 @@ func ExampleFS_jsonPath() {
 	fmt.Println(string(content))
 	// Output:
 	// "alice@example.com"
+}
+
+// ExampleFS_caching demonstrates using the built-in cache to accelerate
+// repeated filesystem operations.
+func ExampleFS_caching() {
+	fsys := ragfs.New()
+
+	// Enable caching with custom configuration
+	fsys.EnableCache(ragfs.CacheConfig{
+		MaxEntries: 100,              // Cache up to 100 entries per layer
+		TTL:        60 * time.Second, // Entries expire after 60 seconds
+	})
+
+	// Simulate an expensive database query
+	callCount := 0
+	fsys.Map("/users/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		callCount++ // Track how many times handler is called
+
+		// Simulate expensive operation (e.g., database query)
+		user := map[string]any{
+			"id":    params["id"],
+			"name":  "User " + params["id"],
+			"email": params["id"] + "@example.com",
+		}
+
+		content, _ := json.MarshalIndent(user, "", "  ")
+		return []fs.DirEntry{
+			&jsonFileEntry{
+				name:    params["id"] + ".json",
+				content: content,
+			},
+		}, nil
+	})
+
+	// First read - calls the handler (cache miss)
+	f1, _ := fsys.Open("/users/123")
+	io.ReadAll(f1)
+	f1.Close()
+
+	// Second read - uses cached result (cache hit)
+	f2, _ := fsys.Open("/users/123")
+	io.ReadAll(f2)
+	f2.Close()
+
+	// Third read - still cached
+	f3, _ := fsys.Open("/users/123")
+	io.ReadAll(f3)
+	f3.Close()
+
+	// Check cache statistics
+	stats := fsys.Stats()
+	fmt.Printf("Handler called: %d times\n", callCount)
+	fmt.Printf("Cache hits: %d\n", stats.Hits.Load())
+	fmt.Printf("Cache misses: %d\n", stats.Misses.Load())
+
+	// Invalidate the cache
+	fsys.Invalidate("/users/123")
+
+	// Next read will call handler again
+	f4, _ := fsys.Open("/users/123")
+	io.ReadAll(f4)
+	f4.Close()
+
+	fmt.Printf("Handler called after invalidation: %d times\n", callCount)
+
+	// Output:
+	// Handler called: 1 times
+	// Cache hits: 4
+	// Cache misses: 2
+	// Handler called after invalidation: 2 times
+}
+
+// ExampleFS_cachingWithPrefix demonstrates prefix-based cache invalidation
+// for efficiently clearing related entries.
+func ExampleFS_cachingWithPrefix() {
+	fsys := ragfs.New()
+
+	// Enable caching with default config
+	fsys.EnableCache(ragfs.CacheConfig{})
+
+	callCount := 0
+	fsys.Map("/data/{category}/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		callCount++
+		content := []byte(fmt.Sprintf("%s-%s", params["category"], params["id"]))
+		return []fs.DirEntry{
+			&jsonFileEntry{
+				name:    params["id"],
+				content: content,
+			},
+		}, nil
+	})
+
+	// Access multiple paths
+	paths := []string{
+		"/data/users/1",
+		"/data/users/2",
+		"/data/posts/1",
+		"/data/posts/2",
+	}
+
+	for _, path := range paths {
+		f, _ := fsys.Open(path)
+		io.ReadAll(f)
+		f.Close()
+	}
+
+	fmt.Printf("Initial calls: %d\n", callCount)
+
+	// Access again - all from cache
+	for _, path := range paths {
+		f, _ := fsys.Open(path)
+		io.ReadAll(f)
+		f.Close()
+	}
+
+	fmt.Printf("After cached reads: %d\n", callCount)
+
+	// Invalidate all users
+	fsys.InvalidatePrefix("/data/users/")
+
+	// Re-access users - these will call the handler
+	// Posts remain cached
+	for _, path := range paths {
+		f, _ := fsys.Open(path)
+		io.ReadAll(f)
+		f.Close()
+	}
+
+	stats := fsys.Stats()
+	fmt.Printf("After prefix invalidation: %d\n", callCount)
+	fmt.Printf("Total cache hits: %d\n", stats.Hits.Load())
+	fmt.Printf("Total cache misses: %d\n", stats.Misses.Load())
+
+	// Output:
+	// Initial calls: 4
+	// After cached reads: 4
+	// After prefix invalidation: 6
+	// Total cache hits: 12
+	// Total cache misses: 12
 }
