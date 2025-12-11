@@ -135,3 +135,39 @@ func TestPathParameters(t *testing.T) {
 		t.Errorf("expected content with date, got %s", content)
 	}
 }
+
+func TestWildcardPattern(t *testing.T) {
+	fsys := ragfs.New()
+
+	var capturedPath string
+	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		capturedPath = path
+		content := []byte("wildcard match: " + path)
+		return []fs.DirEntry{
+			&testFileEntry{name: "file.txt", content: content},
+		}, nil
+	}
+
+	// Register a wildcard pattern that matches any path
+	fsys.Map("/*", handler)
+
+	// Test single-level path
+	f, err := fsys.Open("/test")
+	if err != nil {
+		t.Fatalf("Open('/test') error: %v", err)
+	}
+	f.Close()
+	if capturedPath != "/test" {
+		t.Errorf("expected path /test, got %s", capturedPath)
+	}
+
+	// Test multi-level path
+	f, err = fsys.Open("/app/config/name")
+	if err != nil {
+		t.Fatalf("Open('/app/config/name') error: %v", err)
+	}
+	f.Close()
+	if capturedPath != "/app/config/name" {
+		t.Errorf("expected path /app/config/name, got %s", capturedPath)
+	}
+}

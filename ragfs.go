@@ -16,6 +16,7 @@ package ragfs
 import (
 	"bytes"
 	"context"
+	"io"
 	"io/fs"
 	"strings"
 	"time"
@@ -82,16 +83,30 @@ func (f *FS) Open(name string) (fs.File, error) {
 		return nil, err
 	}
 
-	// For now, assume we're opening a file and the first entry contains the content
-	// We need to extract content from the DirEntry somehow
 	if len(entries) == 0 {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 	}
 
+	// If we have multiple entries, this is a directory
+	if len(entries) > 1 {
+		return &dirFile{
+			name:    name,
+			entries: entries,
+		}, nil
+	}
+
+	// Single entry - check if it's a directory or file
 	entry := entries[0]
 
-	// We need a way to get content from the entry
-	// For now, we'll use a type assertion to a custom interface
+	// If entry is a directory, return dirFile
+	if entry.IsDir() {
+		return &dirFile{
+			name:    name,
+			entries: entries,
+		}, nil
+	}
+
+	// It's a file - get content
 	if ce, ok := entry.(interface{ Content() []byte }); ok {
 		return &file{
 			name:   entry.Name(),
@@ -126,6 +141,68 @@ func (f *file) Close() error {
 	return nil
 }
 
+// dirFile implements fs.ReadDirFile for directories
+type dirFile struct {
+	name    string
+	entries []fs.DirEntry
+	offset  int
+}
+
+// Stat returns directory information.
+func (d *dirFile) Stat() (fs.FileInfo, error) {
+	return &dirInfo{name: d.name}, nil
+}
+
+// Read is not supported for directories.
+func (d *dirFile) Read(p []byte) (int, error) {
+	return 0, &fs.PathError{Op: "read", Path: d.name, Err: fs.ErrInvalid}
+}
+
+// Close closes the directory.
+func (d *dirFile) Close() error {
+	return nil
+}
+
+// ReadDir reads directory entries.
+func (d *dirFile) ReadDir(n int) ([]fs.DirEntry, error) {
+	if d.offset >= len(d.entries) {
+		if n <= 0 {
+			return nil, nil
+		}
+		return nil, io.EOF
+	}
+
+	if n <= 0 {
+		// Return all remaining entries
+		entries := d.entries[d.offset:]
+		d.offset = len(d.entries)
+		return entries, nil
+	}
+
+	// Return up to n entries
+	end := d.offset + n
+	if end > len(d.entries) {
+		end = len(d.entries)
+	}
+
+	entries := d.entries[d.offset:end]
+	d.offset = end
+
+	return entries, nil
+}
+
+// dirInfo implements fs.FileInfo for directories
+type dirInfo struct {
+	name string
+}
+
+func (i *dirInfo) Name() string       { return i.name }
+func (i *dirInfo) Size() int64        { return 0 }
+func (i *dirInfo) Mode() fs.FileMode  { return fs.ModeDir | 0755 }
+func (i *dirInfo) ModTime() time.Time { return time.Time{} }
+func (i *dirInfo) IsDir() bool        { return true }
+func (i *dirInfo) Sys() any           { return nil }
+
 // fileInfo implements fs.FileInfo
 type fileInfo struct {
 	name string
@@ -151,17 +228,37 @@ func (i *fileInfo) IsDir() bool { return false }
 func (i *fileInfo) Sys() any { return nil }
 
 // matchPattern matches a path against a pattern and extracts parameters.
-// Pattern format: /emails/{date} matches /emails/2025-10-07 and extracts date=2025-10-07
+// Pattern format:
+//   - /emails/{date} matches /emails/2025-10-07 and extracts date=2025-10-07
+//   - /** matches any path with any number of segments
+//   - /*/** matches any path with at least one segment
 func matchPattern(pattern, path string) (bool, map[string]string) {
 	params := make(map[string]string)
+
+	// Handle wildcard pattern /**
+	if pattern == "/**" || pattern == "/*" {
+		// Match any path
+		return true, params
+	}
 
 	// Split pattern and path into segments
 	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
 	pathParts := strings.Split(strings.Trim(path, "/"), "/")
 
-	// Must have same number of segments
-	if len(patternParts) != len(pathParts) {
-		return false, nil
+	// Check if pattern ends with ** (match remaining segments)
+	hasWildcard := len(patternParts) > 0 && patternParts[len(patternParts)-1] == "**"
+	if hasWildcard {
+		// Remove ** from pattern for matching
+		patternParts = patternParts[:len(patternParts)-1]
+		// Path must have at least as many segments as the pattern (without **)
+		if len(pathParts) < len(patternParts) {
+			return false, nil
+		}
+	} else {
+		// Without wildcard, must have same number of segments
+		if len(patternParts) != len(pathParts) {
+			return false, nil
+		}
 	}
 
 	// Match each segment
