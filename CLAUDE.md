@@ -132,6 +132,32 @@ When working on this project:
 6. **Prefer simplicity** - Minimal code to solve the problem
 7. **Handle errors explicitly** - Return appropriate fs.PathError values
 
+### Verification Requirements
+
+**CRITICAL**: Before claiming any work is complete, you MUST verify three things:
+
+1. **Code compiles**: `go build ./...` must succeed
+2. **Tests pass**: `go test -v ./...` must pass with no failures
+3. **Real-world verification**: For FUSE mounts and examples, actually run the program and verify it works as expected
+
+**For FUSE mount changes specifically:**
+- Build the mount example: `go build -o ragfs-mount examples/mount/main.go`
+- Run with timeout to verify it mounts quickly: Mount should complete in <3 seconds
+- Verify mount point is accessible: `ls /tmp/ragfs-mount` should work
+- Verify files are readable: `cat /tmp/ragfs-mount/app/name` should return content
+- Verify directories list correctly: `ls /tmp/ragfs-mount/app/` should show entries
+
+**Never claim success based on:**
+- Code that compiles but hasn't been tested
+- Tests that pass but haven't been verified in real use
+- Output from background processes or worktrees when working on main branch
+- Assumptions about what "should" work
+
+**Evidence required:**
+- Show compilation output
+- Show test output
+- Show real-world usage with actual command output demonstrating the feature works
+
 ## Testing Strategy
 
 ### Unit Tests
