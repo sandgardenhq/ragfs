@@ -166,6 +166,58 @@ func TestCacheTTLExpiry(t *testing.T) {
 	}
 }
 
+// TestCacheNoTTL verifies that NoTTL disables time-based expiration
+func TestCacheNoTTL(t *testing.T) {
+	fsys := New()
+	fsys.EnableCache(CacheConfig{
+		MaxEntries: 10,
+		TTL:        NoTTL, // Disable TTL
+	})
+
+	callCount := 0
+	fsys.Map("/test", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		callCount++
+		return []fs.DirEntry{
+			&testEntry{name: "file.txt", content: []byte(fmt.Sprintf("call-%d", callCount))},
+		}, nil
+	})
+
+	// First call
+	f1, _ := fsys.Open("/test")
+	content1, _ := io.ReadAll(f1)
+	f1.Close()
+
+	if string(content1) != "call-1" {
+		t.Errorf("Expected 'call-1', got '%s'", string(content1))
+	}
+
+	if callCount != 1 {
+		t.Errorf("Expected 1 call, got %d", callCount)
+	}
+
+	// Wait longer than a typical TTL would be
+	time.Sleep(200 * time.Millisecond)
+
+	// Second call should still use cache (NoTTL means never expire)
+	f2, _ := fsys.Open("/test")
+	content2, _ := io.ReadAll(f2)
+	f2.Close()
+
+	if string(content2) != "call-1" {
+		t.Errorf("Expected 'call-1' (cached), got '%s'", string(content2))
+	}
+
+	if callCount != 1 {
+		t.Errorf("Expected handler to still be called only 1 time (NoTTL should prevent expiry), got %d", callCount)
+	}
+
+	// Verify stats show hits
+	stats := fsys.Stats()
+	if stats.Hits.Load() < 2 {
+		t.Errorf("Expected at least 2 cache hits with NoTTL, got %d", stats.Hits.Load())
+	}
+}
+
 // TestCacheLRUEviction verifies LRU eviction behavior
 func TestCacheLRUEviction(t *testing.T) {
 	fsys := New()

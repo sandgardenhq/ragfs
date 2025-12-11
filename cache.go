@@ -9,6 +9,13 @@ import (
 	"time"
 )
 
+const (
+	// NoTTL is a special value for CacheConfig.TTL that disables TTL-based expiration.
+	// Entries will never expire based on time and will only be evicted when MaxEntries is reached.
+	// Use this for data that never changes or when you want to manually control cache invalidation.
+	NoTTL time.Duration = -1
+)
+
 // CacheConfig configures the caching behavior for a ragfs filesystem.
 // Caching is opt-in and disabled by default.
 type CacheConfig struct {
@@ -19,7 +26,10 @@ type CacheConfig struct {
 
 	// TTL is the time-to-live for cached entries.
 	// Entries older than TTL are considered expired and will be refetched.
-	// 0 means no expiry (entries live forever or until evicted).
+	// Special values:
+	//   0: Default TTL (30 seconds) is used
+	//   NoTTL (-1): TTL is disabled, entries never expire based on time
+	//   > 0: Custom TTL duration
 	TTL time.Duration
 }
 
@@ -174,7 +184,7 @@ func (c *lruCache) get(key string) interface{} {
 		return nil
 	}
 
-	// Check TTL expiry
+	// Check TTL expiry (skip if NoTTL is set)
 	if c.ttl > 0 && time.Since(entry.timestamp) > c.ttl {
 		c.delete(key)
 		return nil
