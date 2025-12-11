@@ -2,6 +2,15 @@
 // It implements the fs.FS interface, allowing LLM agents and applications to interact with
 // data sources (APIs, databases) using familiar filesystem operations.
 //
+// Pattern Syntax (inspired by net/http.ServeMux):
+//   - /emails/{date} matches /emails/2025-10-07 and extracts date=2025-10-07
+//   - /files/{path...} matches /files/a/b/c and captures the rest of the path
+//   - /users/{$} matches only /users exactly (not /users/)
+//   - 755 /users/{id} adds permission requirements (owner read=4, execute=1)
+//
+// Most-specific pattern matching is used (not first-match).
+// Conflicting patterns will cause Map to panic.
+//
 // Example usage:
 //
 //	fsys := ragfs.New()
@@ -18,6 +27,7 @@ import (
 	"context"
 	"io"
 	"io/fs"
+	"slices"
 	"strings"
 	"time"
 )
@@ -28,55 +38,84 @@ type Handler func(ctx context.Context, path string, params map[string]string) ([
 
 // FS is a filesystem that maps path patterns to handlers.
 // It implements the fs.FS interface from the standard library.
+// Routes are matched using most-specific pattern matching with optional
+// permission-based access control.
 type FS struct {
-	routes []route
+	routes []routeInternal
 }
 
-// route represents a pattern-to-handler mapping.
-type route struct {
-	pattern string
+// routeInternal represents a parsed pattern-to-handler mapping.
+type routeInternal struct {
+	pattern *pattern
 	handler Handler
 }
 
 // New creates a new ragfs filesystem.
 func New() *FS {
 	return &FS{
-		routes: make([]route, 0),
+		routes: make([]routeInternal, 0),
 	}
 }
 
 // Map registers a handler for the given path pattern.
-// Patterns can include parameters in curly braces, e.g., "/emails/{date}".
-// When a path is accessed, the first matching pattern's handler is called.
-func (f *FS) Map(pattern string, handler Handler) error {
-	f.routes = append(f.routes, route{
-		pattern: pattern,
+// Patterns follow ServeMux-style syntax:
+//   - {name} matches a single path segment
+//   - {name...} matches the rest of the path
+//   - {$} matches only the end of the path (exact match)
+//   - Prefix with "755 " to add permission requirements (optional)
+//
+// Most-specific pattern wins when multiple patterns match.
+// If two patterns conflict (match same paths with no specificity difference),
+// Map panics.
+//
+// For backward compatibility, patterns using the old "**" syntax
+// are automatically converted to {_rest...}.
+func (f *FS) Map(patternStr string, handler Handler) error {
+	patternStr = convertLegacyPattern(patternStr)
+
+	p, err := parsePattern(patternStr)
+	if err != nil {
+		return err
+	}
+
+	for _, existing := range f.routes {
+		if p.conflictsWith(existing.pattern) {
+			panic("ragfs: conflicting patterns: " + patternStr + " and " + existing.pattern.str)
+		}
+	}
+
+	f.routes = append(f.routes, routeInternal{
+		pattern: p,
 		handler: handler,
 	})
 	return nil
 }
 
-// ReadDir reads the named directory, implementing fs.ReadDirFS.
-// It matches the path against registered patterns, calls the matching handler,
-// and returns the directory entries directly.
-// Returns fs.ErrNotExist if no pattern matches.
-func (f *FS) ReadDir(name string) ([]fs.DirEntry, error) {
-	var handler Handler
-	var params map[string]string
-
-	for _, r := range f.routes {
-		if match, p := matchPattern(r.pattern, name); match {
-			handler = r.handler
-			params = p
-			break
-		}
+func convertLegacyPattern(s string) string {
+	if strings.HasSuffix(s, "/**") {
+		return strings.TrimSuffix(s, "/**") + "/{_rest...}"
 	}
+	if s == "/**" {
+		return "/{_rest...}"
+	}
+	if s == "/*" {
+		return "/{_rest...}"
+	}
+	return s
+}
 
-	if handler == nil {
+// ReadDir reads the named directory, implementing fs.ReadDirFS.
+// It matches the path against registered patterns using most-specific matching,
+// checks execute permission (owner bit 1), and returns the directory entries.
+// Returns fs.ErrNotExist if no pattern matches or fs.ErrPermission if permission denied.
+func (f *FS) ReadDir(name string) ([]fs.DirEntry, error) {
+	best := selectBestMatch(f.routes, name, false)
+	if best == nil {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
 	}
 
-	entries, err := handler(context.Background(), name, params)
+	params, _ := best.pattern.match(name)
+	entries, err := best.handler(context.Background(), name, params)
 	if err != nil {
 		return nil, err
 	}
@@ -85,28 +124,17 @@ func (f *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 }
 
 // Open opens the named file, implementing fs.FS.
-// It matches the path against registered patterns, calls the matching handler,
-// and returns a file containing the handler's response.
-// Returns fs.ErrNotExist if no pattern matches.
+// It matches the path against registered patterns using most-specific matching,
+// checks read permission (owner bit 4), and returns a file containing the handler's response.
+// Returns fs.ErrNotExist if no pattern matches or fs.ErrPermission if permission denied.
 func (f *FS) Open(name string) (fs.File, error) {
-	// Find matching route with pattern matching
-	var handler Handler
-	var params map[string]string
-
-	for _, r := range f.routes {
-		if match, p := matchPattern(r.pattern, name); match {
-			handler = r.handler
-			params = p
-			break
-		}
-	}
-
-	if handler == nil {
+	best := selectBestMatch(f.routes, name, true)
+	if best == nil {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 	}
 
-	// Call the handler to get entries
-	entries, err := handler(context.Background(), name, params)
+	params, _ := best.pattern.match(name)
+	entries, err := best.handler(context.Background(), name, params)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +171,50 @@ func (f *FS) Open(name string) (fs.File, error) {
 	}
 
 	return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+}
+
+func selectBestMatch(routes []routeInternal, path string, isOpen bool) *routeInternal {
+	var matches []routeInternal
+
+	for _, r := range routes {
+		if _, ok := r.pattern.match(path); ok {
+			if isOpen && !r.pattern.allowsOpen() {
+				continue
+			}
+			if !isOpen && !r.pattern.allowsReadDir() {
+				continue
+			}
+			matches = append(matches, r)
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil
+	}
+
+	if len(matches) == 1 {
+		return &matches[0]
+	}
+
+	slices.SortFunc(matches, func(a, b routeInternal) int {
+		if a.pattern.moreSpecificThan(b.pattern) {
+			return -1
+		}
+		if b.pattern.moreSpecificThan(a.pattern) {
+			return 1
+		}
+		bitsA := countPermBits(a.pattern.perm)
+		bitsB := countPermBits(b.pattern.perm)
+		if bitsA < bitsB {
+			return -1
+		}
+		if bitsA > bitsB {
+			return 1
+		}
+		return 0
+	})
+
+	return &matches[0]
 }
 
 // file implements fs.File
@@ -208,10 +280,7 @@ func (d *dirFile) ReadDir(n int) ([]fs.DirEntry, error) {
 	}
 
 	// Return up to n entries
-	end := d.offset + n
-	if end > len(d.entries) {
-		end = len(d.entries)
-	}
+	end := min(d.offset+n, len(d.entries))
 
 	entries := d.entries[d.offset:end]
 	d.offset = end
@@ -254,52 +323,3 @@ func (i *fileInfo) IsDir() bool { return false }
 
 // Sys returns underlying data source (always nil).
 func (i *fileInfo) Sys() any { return nil }
-
-// matchPattern matches a path against a pattern and extracts parameters.
-// Pattern format:
-//   - /emails/{date} matches /emails/2025-10-07 and extracts date=2025-10-07
-//   - /** matches any path with any number of segments
-//   - /*/** matches any path with at least one segment
-func matchPattern(pattern, path string) (bool, map[string]string) {
-	params := make(map[string]string)
-
-	// Handle wildcard pattern /**
-	if pattern == "/**" || pattern == "/*" {
-		// Match any path
-		return true, params
-	}
-
-	// Split pattern and path into segments
-	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
-	pathParts := strings.Split(strings.Trim(path, "/"), "/")
-
-	// Check if pattern ends with ** (match remaining segments)
-	hasWildcard := len(patternParts) > 0 && patternParts[len(patternParts)-1] == "**"
-	if hasWildcard {
-		// Remove ** from pattern for matching
-		patternParts = patternParts[:len(patternParts)-1]
-		// Path must have at least as many segments as the pattern (without **)
-		if len(pathParts) < len(patternParts) {
-			return false, nil
-		}
-	} else {
-		// Without wildcard, must have same number of segments
-		if len(patternParts) != len(pathParts) {
-			return false, nil
-		}
-	}
-
-	// Match each segment
-	for i, patternPart := range patternParts {
-		if strings.HasPrefix(patternPart, "{") && strings.HasSuffix(patternPart, "}") {
-			// Extract parameter name
-			paramName := patternPart[1 : len(patternPart)-1]
-			params[paramName] = pathParts[i]
-		} else if patternPart != pathParts[i] {
-			// Static segment must match exactly
-			return false, nil
-		}
-	}
-
-	return true, params
-}
