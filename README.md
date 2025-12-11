@@ -103,7 +103,7 @@ Mount ragfs as a real filesystem:
 
 ```bash
 # Build the mount program
-go build -o ragfs-mount ./examples/mount
+go build -o ragfs-mount ./examples/json
 
 # Create mount point
 mkdir /tmp/ragfs

@@ -64,7 +64,7 @@ go test -v -cover
 - `fuse.go` - FUSE bridge implementation
 - `ragfs_test.go` - Unit tests for core functionality
 - `examples_test.go` - Example test functions and integration tests
-- `examples/mount/` - FUSE mount example program
+- `examples/json/` - JSON FUSE mount example program
 - `FUSE.md` - Complete FUSE integration guide
 
 ## Common Development Tasks
@@ -141,7 +141,7 @@ When working on this project:
 3. **Real-world verification**: For FUSE mounts and examples, actually run the program and verify it works as expected
 
 **For FUSE mount changes specifically:**
-- Build the mount example: `go build -o ragfs-mount examples/mount/main.go`
+- Build the mount example: `go build -o ragfs-mount examples/json/main.go`
 - Run with timeout to verify it mounts quickly: Mount should complete in <3 seconds
 - Verify mount point is accessible: `ls /tmp/ragfs-mount` should work
 - Verify files are readable: `cat /tmp/ragfs-mount/app/name` should return content
