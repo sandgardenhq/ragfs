@@ -152,7 +152,7 @@ See `CLAUDE.md` for detailed development guidelines.
 - ✅ fs.FS interface implementation
 - ✅ File content reading
 - ✅ JSON mapping example
-- 🚧 Directory listing (ReadDir) - planned
+- ✅ Directory listing (ReadDir) - planned
 - 🚧 Most-specific route matching - planned
 - 🚧 Wildcard patterns - planned
 

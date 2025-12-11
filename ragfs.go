@@ -56,6 +56,34 @@ func (f *FS) Map(pattern string, handler Handler) error {
 	return nil
 }
 
+// ReadDir reads the named directory, implementing fs.ReadDirFS.
+// It matches the path against registered patterns, calls the matching handler,
+// and returns the directory entries directly.
+// Returns fs.ErrNotExist if no pattern matches.
+func (f *FS) ReadDir(name string) ([]fs.DirEntry, error) {
+	var handler Handler
+	var params map[string]string
+
+	for _, r := range f.routes {
+		if match, p := matchPattern(r.pattern, name); match {
+			handler = r.handler
+			params = p
+			break
+		}
+	}
+
+	if handler == nil {
+		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
+	}
+
+	entries, err := handler(context.Background(), name, params)
+	if err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
 // Open opens the named file, implementing fs.FS.
 // It matches the path against registered patterns, calls the matching handler,
 // and returns a file containing the handler's response.
