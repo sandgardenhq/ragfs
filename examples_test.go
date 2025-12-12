@@ -145,6 +145,7 @@ func (e *jsonFileEntry) Content() []byte            { return e.content }
 //   - Mapping path patterns to handlers
 //   - Extracting path parameters
 //   - Converting data to filesystem entries
+//   - Using LRU caching to accelerate repeated reads
 func ExampleFS() {
 	// Sample configuration data
 	config := map[string]any{
@@ -160,6 +161,12 @@ func ExampleFS() {
 
 	// Create a new filesystem
 	fsys := ragfs.New()
+
+	// Enable LRU caching for faster repeated reads
+	fsys.EnableCache(ragfs.CacheConfig{
+		MaxEntries: 100,              // Cache up to 100 entries per layer
+		TTL:        15 * time.Second, // 15 second TTL
+	})
 
 	// Map a handler for /config/{key} pattern
 	fsys.Map("/config/{key}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
