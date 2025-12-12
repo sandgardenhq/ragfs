@@ -32,6 +32,8 @@ type FS struct {
 	routes      []route
 	cache       *Cache       // nil if caching is disabled
 	boltDBCache *boltDBCache // nil if BoltDB caching is not enabled
+	collector   *Collector   // metrics collector
+	metricsFS   *MetricsFS   // virtual filesystem for /_metrics/
 }
 
 // route represents a pattern-to-handler mapping.
@@ -42,8 +44,11 @@ type route struct {
 
 // New creates a new ragfs filesystem.
 func New() *FS {
+	collector := NewCollector()
 	return &FS{
-		routes: make([]route, 0),
+		routes:    make([]route, 0),
+		collector: collector,
+		metricsFS: NewMetricsFS(collector),
 	}
 }
 
@@ -91,6 +96,22 @@ func (f *FS) findLongestMatch(name string) *routeMatch {
 // and returns the directory entries directly.
 // Returns fs.ErrNotExist if no pattern matches.
 func (f *FS) ReadDir(name string) ([]fs.DirEntry, error) {
+	// Intercept /_metrics/* paths and delegate to metricsFS
+	if strings.HasPrefix(name, "/_metrics") {
+		file, err := f.metricsFS.Open(name)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+
+		dirFile, ok := file.(fs.ReadDirFile)
+		if !ok {
+			return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrInvalid}
+		}
+
+		return dirFile.ReadDir(-1)
+	}
+
 	matched := f.findLongestMatch(name)
 	if matched == nil {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
@@ -110,6 +131,11 @@ func (f *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 // If caching is enabled, results are cached for subsequent calls.
 // Returns fs.ErrNotExist if no pattern matches.
 func (f *FS) Open(name string) (fs.File, error) {
+	// Intercept /_metrics/* paths and delegate to metricsFS
+	if strings.HasPrefix(name, "/_metrics") {
+		return f.metricsFS.Open(name)
+	}
+
 	matched := f.findLongestMatch(name)
 	if matched == nil {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
@@ -127,6 +153,7 @@ func (f *FS) Open(name string) (fs.File, error) {
 
 	if entries == nil {
 		// Cache miss - call the handler
+		f.collector.RecordCacheMiss()
 		entries, err = matched.route.handler(context.Background(), name, matched.params)
 		if err != nil {
 			return nil, err
@@ -138,6 +165,9 @@ func (f *FS) Open(name string) (fs.File, error) {
 		} else if f.cache != nil {
 			f.cache.setHandler(name, entries)
 		}
+	} else {
+		// Cache hit
+		f.collector.RecordCacheHit()
 	}
 
 	if len(entries) == 0 {
