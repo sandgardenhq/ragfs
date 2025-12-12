@@ -190,7 +190,7 @@ func main() {
 		}, nil
 	})
 
-	// Map /{table}/_query to list query directory (currently no listing needed)
+	// Map /{table}/_query to list query directory
 	fsys.Map("/{table}/_query", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		tableName := params["table"]
 
@@ -203,8 +203,12 @@ func main() {
 			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
 		}
 
-		// Return empty directory (queries are accessed directly via file paths)
-		return []fs.DirEntry{}, nil
+		// Return a README file to make the directory visible
+		readme := "Query this table using the pattern: {column}.{value}.{format}\n" +
+			"Example: email.alice@example.com.json or age.30.csv\n"
+		return []fs.DirEntry{
+			&fileEntry{name: "README", content: []byte(readme)},
+		}, nil
 	})
 
 	// Map /{table}/_query/{query_file} to perform queries
