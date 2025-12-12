@@ -370,6 +370,7 @@ var DOTDOT = &DirEntry{
 }
 
 // NewDirectoryListing creates a new directory listing with the given entries.
+// It includes the current and parent directory entries.
 func NewDirectoryListing(entries []fs.DirEntry) []fs.DirEntry {
 	return append([]fs.DirEntry{DOT, DOTDOT}, entries...)
 }
