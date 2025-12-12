@@ -6,8 +6,8 @@ import (
 	"io/fs"
 	"syscall"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
 	fuseFS "github.com/hanwen/go-fuse/v2/fs"
+	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
 // FUSENode implements the go-fuse node interface for ragfs.

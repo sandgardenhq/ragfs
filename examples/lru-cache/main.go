@@ -45,7 +45,7 @@ func main() {
 
 	// Enable in-memory LRU cache
 	fsys.EnableCache(ragfs.CacheConfig{
-		MaxEntries: 3,             // Small limit to demonstrate eviction
+		MaxEntries: 3,               // Small limit to demonstrate eviction
 		TTL:        5 * time.Second, // Short TTL for demo
 	})
 
