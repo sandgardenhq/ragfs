@@ -78,12 +78,9 @@ func main() {
 
 		var entries []fs.DirEntry
 		for _, table := range tables {
-			entries = append(entries, &dirEntry{
-				name:  table,
-				isDir: true,
-			})
+			entries = append(entries, ragfs.NewDirEntry(table, true))
 		}
-		return entries, nil
+		return ragfs.NewDirectoryListing(entries), nil
 	})
 
 	// Map /{table} to list all rows in that table
@@ -115,8 +112,8 @@ func main() {
 		var entries []fs.DirEntry
 		// Add special directories
 		entries = append(entries,
-			&dirEntry{name: "_metrics", isDir: true},
-			&dirEntry{name: "_query", isDir: true},
+			ragfs.NewDirEntry("_metrics", true),
+			ragfs.NewDirEntry("_query", true),
 		)
 
 		for rows.Next() {
@@ -127,13 +124,13 @@ func main() {
 			// Create entries for each format
 			idStr := fmt.Sprintf("%v", id)
 			entries = append(entries,
-				&fileEntry{name: fmt.Sprintf("%s.json", idStr), content: nil},
-				&fileEntry{name: fmt.Sprintf("%s.csv", idStr), content: nil},
-				&fileEntry{name: fmt.Sprintf("%s.txt", idStr), content: nil},
+				ragfs.NewFileEntry(fmt.Sprintf("%s.json", idStr), nil),
+				ragfs.NewFileEntry(fmt.Sprintf("%s.csv", idStr), nil),
+				ragfs.NewFileEntry(fmt.Sprintf("%s.txt", idStr), nil),
 			)
 		}
 
-		return entries, nil
+		return ragfs.NewDirectoryListing(entries), nil
 	})
 
 	// Map /{table}/_metrics to list available metrics
@@ -149,10 +146,17 @@ func main() {
 			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
 		}
 
+		// Get row count
+		var count int
+		err = db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&count)
+		if err != nil {
+			return nil, err
+		}
+
 		// Return available metrics
-		return []fs.DirEntry{
-			&fileEntry{name: "row_count", content: nil},
-		}, nil
+		return ragfs.NewDirectoryListing([]fs.DirEntry{
+			ragfs.NewFileEntry("row_count", []byte(fmt.Sprintf("%d\n", count))),
+		}), nil
 	})
 
 	// Map /{table}/_metrics/{metric} to fetch metric value
@@ -183,10 +187,7 @@ func main() {
 		}
 
 		return []fs.DirEntry{
-			&fileEntry{
-				name:    metric,
-				content: content,
-			},
+			ragfs.NewFileEntry(metric, content),
 		}, nil
 	})
 
@@ -206,9 +207,9 @@ func main() {
 		// Return a README file to make the directory visible
 		readme := "Query this table using the pattern: {column}.{value}.{format}\n" +
 			"Example: email.alice@example.com.json or age.30.csv\n"
-		return []fs.DirEntry{
-			&fileEntry{name: "README", content: []byte(readme)},
-		}, nil
+		return ragfs.NewDirectoryListing([]fs.DirEntry{
+			ragfs.NewFileEntry("README", []byte(readme)),
+		}), nil
 	})
 
 	// Map /{table}/_query/{query_file} to perform queries
@@ -300,10 +301,7 @@ func main() {
 		}
 
 		return []fs.DirEntry{
-			&fileEntry{
-				name:    queryFile,
-				content: content,
-			},
+			ragfs.NewFileEntry(queryFile, content),
 		}, nil
 	})
 
@@ -383,10 +381,7 @@ func main() {
 		}
 
 		return []fs.DirEntry{
-			&fileEntry{
-				name:    fileName,
-				content: content,
-			},
+			ragfs.NewFileEntry(fileName, content),
 		}, nil
 	})
 
@@ -568,30 +563,3 @@ func formatTXT(rowData map[string]interface{}) string {
 	}
 	return buf.String()
 }
-
-type fileEntry struct {
-	name    string
-	content []byte
-}
-
-func (e *fileEntry) Name() string               { return e.name }
-func (e *fileEntry) IsDir() bool                { return false }
-func (e *fileEntry) Type() fs.FileMode          { return 0 }
-func (e *fileEntry) Info() (fs.FileInfo, error) { return nil, nil }
-func (e *fileEntry) Content() []byte            { return e.content }
-
-type dirEntry struct {
-	name  string
-	isDir bool
-}
-
-func (e *dirEntry) Name() string      { return e.name }
-func (e *dirEntry) IsDir() bool       { return e.isDir }
-func (e *dirEntry) Type() fs.FileMode {
-	if e.isDir {
-		return fs.ModeDir
-	}
-	return 0
-}
-func (e *dirEntry) Info() (fs.FileInfo, error) { return nil, nil }
-func (e *dirEntry) Content() []byte            { return nil }

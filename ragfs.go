@@ -18,7 +18,6 @@ import (
 	"context"
 	"io"
 	"io/fs"
-	"log"
 	"strings"
 	"time"
 )
@@ -67,7 +66,6 @@ type routeMatch struct {
 // findLongestMatch finds the longest matching route pattern for the given path.
 // Returns nil if no match is found.
 func (f *FS) findLongestMatch(name string) *routeMatch {
-	log.Printf("findLongestMatch: %s", name)
 	var matched routeMatch
 	for _, r := range f.routes {
 		if match, p := matchPattern(r.pattern, name); match {
@@ -93,7 +91,6 @@ func (f *FS) findLongestMatch(name string) *routeMatch {
 // and returns the directory entries directly.
 // Returns fs.ErrNotExist if no pattern matches.
 func (f *FS) ReadDir(name string) ([]fs.DirEntry, error) {
-	log.Printf("ReadDir: %s", name)
 	matched := f.findLongestMatch(name)
 	if matched == nil {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
@@ -113,7 +110,6 @@ func (f *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 // If caching is enabled, results are cached for subsequent calls.
 // Returns fs.ErrNotExist if no pattern matches.
 func (f *FS) Open(name string) (fs.File, error) {
-	log.Printf("Open: %s", name)
 	matched := f.findLongestMatch(name)
 	if matched == nil {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
@@ -308,6 +304,103 @@ func (i *fileInfo) IsDir() bool { return false }
 
 // Sys returns underlying data source (always nil).
 func (i *fileInfo) Sys() any { return nil }
+
+// FileEntry implements fs.DirEntry for file entries with content.
+// It is a convenience type for handlers that return file entries.
+// The Content method provides the file's byte content.
+//
+// Example:
+//
+//	return []fs.DirEntry{
+//	    ragfs.NewFileEntry("config.json", []byte(`{"version": "1.0"}`)),
+//	}, nil
+type FileEntry struct {
+	name    string
+	content []byte
+}
+
+// NewFileEntry creates a new FileEntry with the given name and content.
+func NewFileEntry(name string, content []byte) *FileEntry {
+	return &FileEntry{
+		name:    name,
+		content: content,
+	}
+}
+
+// Name returns the name of the file entry.
+func (e *FileEntry) Name() string { return e.name }
+
+// IsDir returns false, indicating this is a file entry.
+func (e *FileEntry) IsDir() bool { return false }
+
+// Type returns the file mode (0 for regular files).
+func (e *FileEntry) Type() fs.FileMode { return 0 }
+
+// Info returns nil, nil (file info is not provided).
+func (e *FileEntry) Info() (fs.FileInfo, error) { return nil, nil }
+
+// Content returns the file's byte content.
+func (e *FileEntry) Content() []byte { return e.content }
+
+// DirEntry implements fs.DirEntry for directory entries.
+// It is a convenience type for handlers that return directory entries.
+// The Content method returns nil for directories.
+//
+// Example:
+//
+//	return []fs.DirEntry{
+//	    ragfs.NewDirEntry("users", true),
+//	    ragfs.NewDirEntry("config", true),
+//	}, nil
+type DirEntry struct {
+	name  string
+	isDir bool
+}
+
+// DOT is the current directory entry.
+var DOT = &DirEntry{
+	name:  ".",
+	isDir: true,
+}
+
+// DOTDOT is the parent directory entry.
+var DOTDOT = &DirEntry{
+	name:  "..",
+	isDir: true,
+}
+
+// NewDirectoryListing creates a new directory listing with the given entries.
+func NewDirectoryListing(entries []fs.DirEntry) []fs.DirEntry {
+	return append([]fs.DirEntry{DOT, DOTDOT}, entries...)
+}
+
+// NewDirEntry creates a new DirEntry with the given name and directory flag.
+func NewDirEntry(name string, isDir bool) *DirEntry {
+	return &DirEntry{
+		name:  name,
+		isDir: isDir,
+	}
+}
+
+// Name returns the name of the directory entry.
+func (e *DirEntry) Name() string { return e.name }
+
+// IsDir returns whether this entry is a directory.
+func (e *DirEntry) IsDir() bool { return e.isDir }
+
+// Type returns fs.ModeDir if this is a directory, otherwise 0.
+func (e *DirEntry) Type() fs.FileMode {
+	if e.isDir {
+		return fs.ModeDir
+	}
+	return 0
+}
+
+// Info returns nil, nil (file info is not provided).
+func (e *DirEntry) Info() (fs.FileInfo, error) { return nil, nil }
+
+// Content returns nil for directory entries.
+func (e *DirEntry) Content() []byte { return nil }
 
 // matchPattern matches a path against a pattern and extracts parameters.
 // Pattern format:
