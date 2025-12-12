@@ -49,6 +49,10 @@ func New() *FS {
 	}
 	// Enable metrics collection by default (passing nil for cache stats initially)
 	fs.metrics = newMetricsCollector(nil)
+
+	// Register the /_metrics handler
+	fs.registerMetricsHandler()
+
 	return fs
 }
 
