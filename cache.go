@@ -71,8 +71,8 @@ func newCache(config CacheConfig) *Cache {
 // getHandler retrieves cached handler results for a path.
 // Returns nil if not found or expired.
 func (c *Cache) getHandler(path string) []fs.DirEntry {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if val := c.handlerCache.get(path); val != nil {
 		c.stats.Hits.Add(1)
@@ -100,8 +100,8 @@ func (c *Cache) setHandler(path string, entries []fs.DirEntry) {
 // getContent retrieves cached file content for a path.
 // Returns nil if not found or expired.
 func (c *Cache) getContent(path string) []byte {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if val := c.contentCache.get(path); val != nil {
 		c.stats.Hits.Add(1)
