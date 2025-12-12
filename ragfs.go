@@ -29,8 +29,9 @@ type Handler func(ctx context.Context, path string, params map[string]string) ([
 // FS is a filesystem that maps path patterns to handlers.
 // It implements the fs.FS interface from the standard library.
 type FS struct {
-	routes []route
-	cache  *Cache // nil if caching is disabled
+	routes       []route
+	cache        *Cache        // nil if caching is disabled
+	boltDBCache  *boltDBCache  // nil if BoltDB caching is not enabled
 }
 
 // route represents a pattern-to-handler mapping.
@@ -111,7 +112,9 @@ func (f *FS) Open(name string) (fs.File, error) {
 	var entries []fs.DirEntry
 	var err error
 
-	if f.cache != nil {
+	if f.boltDBCache != nil {
+		entries = f.boltDBCache.getHandler(name)
+	} else if f.cache != nil {
 		entries = f.cache.getHandler(name)
 	}
 
@@ -123,7 +126,9 @@ func (f *FS) Open(name string) (fs.File, error) {
 		}
 
 		// Cache the result
-		if f.cache != nil {
+		if f.boltDBCache != nil {
+			f.boltDBCache.setHandler(name, entries)
+		} else if f.cache != nil {
 			f.cache.setHandler(name, entries)
 		}
 	}
@@ -156,7 +161,9 @@ func (f *FS) Open(name string) (fs.File, error) {
 		// Layer 2: Check content cache
 		var content []byte
 
-		if f.cache != nil {
+		if f.boltDBCache != nil {
+			content = f.boltDBCache.getContent(name)
+		} else if f.cache != nil {
 			content = f.cache.getContent(name)
 		}
 
@@ -165,7 +172,9 @@ func (f *FS) Open(name string) (fs.File, error) {
 			content = ce.Content()
 
 			// Cache the content
-			if f.cache != nil {
+			if f.boltDBCache != nil {
+				f.boltDBCache.setContent(name, content)
+			} else if f.cache != nil {
 				f.cache.setContent(name, content)
 			}
 		}
