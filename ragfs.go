@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"io/fs"
+	"log"
 	"strings"
 	"time"
 )
@@ -29,9 +30,9 @@ type Handler func(ctx context.Context, path string, params map[string]string) ([
 // FS is a filesystem that maps path patterns to handlers.
 // It implements the fs.FS interface from the standard library.
 type FS struct {
-	routes       []route
-	cache        *Cache        // nil if caching is disabled
-	boltDBCache  *boltDBCache  // nil if BoltDB caching is not enabled
+	routes      []route
+	cache       *Cache       // nil if caching is disabled
+	boltDBCache *boltDBCache // nil if BoltDB caching is not enabled
 }
 
 // route represents a pattern-to-handler mapping.
@@ -58,27 +59,47 @@ func (f *FS) Map(pattern string, handler Handler) error {
 	return nil
 }
 
+type routeMatch struct {
+	route  route
+	params map[string]string
+}
+
+// findLongestMatch finds the longest matching route pattern for the given path.
+// Returns nil if no match is found.
+func (f *FS) findLongestMatch(name string) *routeMatch {
+	log.Printf("findLongestMatch: %s", name)
+	var matched routeMatch
+	for _, r := range f.routes {
+		if match, p := matchPattern(r.pattern, name); match {
+			if len(matched.route.pattern) < len(r.pattern) {
+				matched = routeMatch{
+					route:  r,
+					params: p,
+				}
+				continue
+			}
+		}
+	}
+
+	if matched.route.pattern == "" {
+		return nil
+	}
+
+	return &matched
+}
+
 // ReadDir reads the named directory, implementing fs.ReadDirFS.
 // It matches the path against registered patterns, calls the matching handler,
 // and returns the directory entries directly.
 // Returns fs.ErrNotExist if no pattern matches.
 func (f *FS) ReadDir(name string) ([]fs.DirEntry, error) {
-	var handler Handler
-	var params map[string]string
-
-	for _, r := range f.routes {
-		if match, p := matchPattern(r.pattern, name); match {
-			handler = r.handler
-			params = p
-			break
-		}
-	}
-
-	if handler == nil {
+	log.Printf("ReadDir: %s", name)
+	matched := f.findLongestMatch(name)
+	if matched == nil {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
 	}
 
-	entries, err := handler(context.Background(), name, params)
+	entries, err := matched.route.handler(context.Background(), name, matched.params)
 	if err != nil {
 		return nil, err
 	}
@@ -92,20 +113,10 @@ func (f *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 // If caching is enabled, results are cached for subsequent calls.
 // Returns fs.ErrNotExist if no pattern matches.
 func (f *FS) Open(name string) (fs.File, error) {
-	// Find matching route with pattern matching
-	var handler Handler
-	var params map[string]string
-
-	for _, r := range f.routes {
-		if match, p := matchPattern(r.pattern, name); match {
-			handler = r.handler
-			params = p
-			break
-		}
-	}
-
-	if handler == nil {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+	log.Printf("Open: %s", name)
+	matched := f.findLongestMatch(name)
+	if matched == nil {
+		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
 	}
 
 	// Layer 1: Check handler cache
@@ -120,7 +131,7 @@ func (f *FS) Open(name string) (fs.File, error) {
 
 	if entries == nil {
 		// Cache miss - call the handler
-		entries, err = handler(context.Background(), name, params)
+		entries, err = matched.route.handler(context.Background(), name, matched.params)
 		if err != nil {
 			return nil, err
 		}
