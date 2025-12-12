@@ -38,7 +38,7 @@ func (e *fileEntry) Info() (fs.FileInfo, error) { return nil, nil }
 func (e *fileEntry) Content() []byte            { return e.content }
 
 func main() {
-	fmt.Println("=== LRU Cache Example ===\n")
+	fmt.Println("=== LRU Cache Example ===")
 
 	// Create filesystem
 	fsys := ragfs.New()
@@ -51,7 +51,7 @@ func main() {
 
 	fmt.Println("LRU cache enabled:")
 	fmt.Println("  Max Entries: 3")
-	fmt.Println("  TTL: 5 seconds\n")
+	fmt.Println("  TTL: 5 seconds")
 
 	// Simulate fetching data
 	callCount := 0

@@ -36,7 +36,7 @@ func (e *fileEntry) Info() (fs.FileInfo, error) { return nil, nil }
 func (e *fileEntry) Content() []byte            { return e.content }
 
 func main() {
-	fmt.Println("=== BoltDB Cache Example ===\n")
+	fmt.Println("=== BoltDB Cache Example ===")
 
 	// Create filesystem
 	fsys := ragfs.New()

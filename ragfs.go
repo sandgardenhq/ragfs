@@ -522,17 +522,19 @@ func (f *FS) InvalidatePrefix(prefix string) error {
 }
 
 // Stats returns current cache statistics.
-// Returns zero values if caching is disabled.
+// Returns nil if caching is disabled.
 //
 // Example:
 //
 //	stats := fsys.Stats()
-//	hitRate := float64(stats.Hits.Load()) / float64(stats.Hits.Load() + stats.Misses.Load())
-//	fmt.Printf("Cache hit rate: %.2f%%\n", hitRate*100)
-func (f *FS) Stats() CacheStats {
+//	if stats != nil {
+//		hitRate := float64(stats.Hits.Load()) / float64(stats.Hits.Load() + stats.Misses.Load())
+//		fmt.Printf("Cache hit rate: %.2f%%\n", hitRate*100)
+//	}
+func (f *FS) Stats() *CacheStats {
 	if f.cache == nil {
-		return CacheStats{}
+		return nil
 	}
 
-	return *f.cache.stats
+	return f.cache.stats
 }

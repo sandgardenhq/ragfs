@@ -31,10 +31,10 @@ func TestCacheDisabledByDefault(t *testing.T) {
 		t.Error("Cache should be nil by default")
 	}
 
-	// Stats should return zero values when cache is disabled
+	// Stats should return nil when cache is disabled
 	stats := fsys.Stats()
-	if stats.Hits.Load() != 0 || stats.Misses.Load() != 0 {
-		t.Error("Stats should be zero when cache is disabled")
+	if stats != nil {
+		t.Error("Stats should be nil when cache is disabled")
 	}
 }
 
