@@ -212,6 +212,36 @@ type ErrorRecord struct {
 - Path routing: correct file mapping
 - Error sanitization
 
+### Thread Safety Tests
+- **Concurrent I/O updates**: Multiple goroutines incrementing counters simultaneously
+  - Use `go test -race` to detect data races
+  - Spawn 100 goroutines each doing 1000 operations
+  - Verify final counts are accurate (100 * 1000 = 100,000)
+  - Test both reads and writes (bytesRead, bytesWritten, readOps, writeOps)
+  - Test latency tracking (totalReadNs, totalWriteNs)
+  - Test timestamp updates (lastReadTime, lastWriteTime)
+
+- **Concurrent error recording**: Multiple goroutines reporting errors
+  - Spawn 50 goroutines each recording 10 errors
+  - Verify errorsTotal is accurate (50 * 10 = 500)
+  - Verify errorsByType map has correct counts
+  - Verify recentErrors circular buffer is intact (max 10 entries)
+  - Check no corruption in error messages
+
+- **Concurrent summary generation**: Multiple readers while writers update
+  - Spawn 10 goroutines continuously recording metrics
+  - Spawn 10 goroutines continuously reading summaries
+  - Run for 1 second
+  - Verify no panics, no data races
+  - Verify all summaries are valid (parseable Markdown/JSON)
+
+- **Mixed concurrent operations**: Realistic simulation
+  - Simulate filesystem operations (Open, ReadDir)
+  - Simulate error recording
+  - Simulate metrics reads (/_metrics/** access)
+  - Run all concurrently for 5 seconds
+  - Verify no races, no panics, accurate counts
+
 ### Integration Tests
 - Full tree traversal
 - Stats accuracy after operations
@@ -265,7 +295,9 @@ type ErrorRecord struct {
 - [ ] Single-value stat files return correct format: "value\n"
 - [ ] Stats update when operations are performed
 - [ ] Error messages are sanitized
-- [ ] All tests pass
+- [ ] All tests pass (including `go test -race`)
+- [ ] Thread-safety tests verify concurrent access works correctly
+- [ ] No data races detected by race detector
 - [ ] Documentation updated
 - [ ] Example demonstrates usage
 
