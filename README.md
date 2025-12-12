@@ -14,6 +14,7 @@ ragfs leverages the fact that LLM models are well-trained on understanding and m
 - **FUSE support**: Mount as a real filesystem using FUSE (Linux/macOS)
 - **Flexible handlers**: User-defined functions that fetch data from any source
 - **Type-safe**: Leverages Go's type system for reliable filesystem operations
+- **High-performance caching**: Optional in-memory LRU cache with TTL support
 
 ## Quick Start
 
@@ -97,6 +98,77 @@ type Handler func(
 
 Your handler must return directory entries that implement a `Content() []byte` method to provide file contents.
 
+## Caching
+
+ragfs includes an optional high-performance in-memory LRU cache to accelerate repeated filesystem operations. Caching is **opt-in** and disabled by default.
+
+### Enabling Cache
+
+```go
+fsys := ragfs.New()
+
+// Enable with default settings (1000 entries, 30s TTL)
+fsys.EnableCache(ragfs.CacheConfig{})
+
+// Or customize the configuration
+fsys.EnableCache(ragfs.CacheConfig{
+    MaxEntries: 500,              // Maximum entries per cache layer
+    TTL:        60 * time.Second, // Time-to-live for cached entries
+})
+```
+
+### Two-Layer Architecture
+
+The cache uses a two-layer design for maximum efficiency:
+
+1. **Layer 1 (Handler Cache)**: Caches the results of expensive handler calls (`[]fs.DirEntry`)
+2. **Layer 2 (Content Cache)**: Caches extracted file content (`[]byte`)
+
+This architecture ensures both expensive operations (database queries, API calls) and content extraction are cached independently.
+
+### Cache Invalidation
+
+Manually invalidate cached entries when your data changes:
+
+```go
+// Invalidate a specific path
+fsys.Invalidate("/users/123")
+
+// Invalidate all paths with a prefix
+fsys.InvalidatePrefix("/users/")
+
+// Clear everything
+fsys.InvalidatePrefix("/")
+```
+
+### Performance Monitoring
+
+Track cache performance with built-in statistics:
+
+```go
+stats := fsys.Stats()
+hitRate := float64(stats.Hits.Load()) / float64(stats.Hits.Load() + stats.Misses.Load())
+fmt.Printf("Cache hit rate: %.2f%%\n", hitRate*100)
+fmt.Printf("Entries: %d, Evictions: %d\n", stats.Entries.Load(), stats.Evictions.Load())
+```
+
+### Performance
+
+Benchmarks show significant performance improvements with caching enabled:
+
+- **8000x faster** for cached reads vs uncached (1.27ms → 157ns)
+- **~155ns** per cache hit operation
+- **Thread-safe** with minimal overhead for concurrent access
+- **Negligible TTL overhead** (~1-2ns per access)
+
+See `cache_bench_test.go` for detailed benchmarks.
+
+### Configuration Guidelines
+
+- **MaxEntries**: Set based on your working set size. Default 1000 is suitable for most applications.
+- **TTL**: Balance between data freshness and cache effectiveness. 0 means no expiry.
+- **Memory**: Each cache layer stores entries separately. Monitor with `Stats()`.
+
 ## FUSE Integration
 
 Mount ragfs as a real filesystem:
@@ -152,9 +224,13 @@ See `CLAUDE.md` for detailed development guidelines.
 - ✅ fs.FS interface implementation
 - ✅ File content reading
 - ✅ JSON mapping example
-- ✅ Directory listing (ReadDir) - planned
+- ✅ High-performance in-memory LRU cache with TTL
+- ✅ Cache invalidation (single path and prefix-based)
+- ✅ Cache statistics and monitoring
+- 🚧 Directory listing (ReadDir) - planned
 - 🚧 Most-specific route matching - planned
 - 🚧 Wildcard patterns - planned
+- 🚧 BoltDB cache adapter - planned
 
 ## License
 

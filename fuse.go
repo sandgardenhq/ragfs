@@ -6,8 +6,8 @@ import (
 	"io/fs"
 	"syscall"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
 	fuseFS "github.com/hanwen/go-fuse/v2/fs"
+	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
 // FUSENode implements the go-fuse node interface for ragfs.
@@ -120,14 +120,19 @@ func (n *FUSENode) Readdir(ctx context.Context) (fuseFS.DirStream, syscall.Errno
 
 // Lookup looks up a child node by name.
 func (n *FUSENode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fuseFS.Inode, syscall.Errno) {
-	// Build child path
-	childPath := n.path + "/" + name
+	// Build child path (without leading slash for internal storage)
+	var childPath string
 	if n.path == "" {
 		childPath = name
+	} else {
+		childPath = n.path + "/" + name
 	}
 
+	// Build path for ragfs (with leading slash)
+	ragfsPath := "/" + childPath
+
 	// Try to open the path
-	f, err := n.fsys.Open(childPath)
+	f, err := n.fsys.Open(ragfsPath)
 	if err != nil {
 		// Path doesn't exist
 		return nil, syscall.ENOENT
@@ -144,7 +149,7 @@ func (n *FUSENode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 
 	child := &FUSENode{
 		fsys:  n.fsys,
-		path:  childPath,
+		path:  childPath, // Store without leading slash
 		isDir: isDir,
 	}
 

@@ -597,3 +597,88 @@ func TestOpenHandlerError(t *testing.T) {
 		t.Errorf("expected error %v, got %v", expectedErr, err)
 	}
 }
+
+// TestRouteSpecificity verifies that more specific routes take precedence
+// over parameterized routes when multiple routes could match the same path.
+func TestRouteSpecificity(t *testing.T) {
+	fsys := ragfs.New()
+
+	// Track which handler was called
+	var calledHandler string
+
+	// Parameterized route: /api/users/{id}
+	paramHandler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		calledHandler = "parameterized"
+		// Don't validate the ID here - just accept whatever is passed
+		return []fs.DirEntry{
+			&testFileEntry{
+				name:    "param.txt",
+				content: []byte("from parameterized handler"),
+			},
+		}, nil
+	}
+
+	// More specific static route: /api/users/special
+	specificHandler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		calledHandler = "specific"
+		return []fs.DirEntry{
+			&testFileEntry{
+				name:    "specific.txt",
+				content: []byte("from specific handler"),
+			},
+		}, nil
+	}
+
+	// Register routes - order matters: more specific should be registered first
+	// to take precedence
+	fsys.Map("/api/users/special", specificHandler)
+	fsys.Map("/api/users/{id}", paramHandler)
+
+	// Test 1: Access the specific route - should use specific handler
+	t.Run("specific route", func(t *testing.T) {
+		calledHandler = ""
+		f, err := fsys.Open("/api/users/special")
+		if err != nil {
+			t.Fatalf("Open failed: %v", err)
+		}
+		defer f.Close()
+
+		content, err := io.ReadAll(f)
+		if err != nil {
+			t.Fatalf("ReadAll failed: %v", err)
+		}
+
+		if calledHandler != "specific" {
+			t.Errorf("expected specific handler to be called, got %q", calledHandler)
+		}
+
+		expected := "from specific handler"
+		if string(content) != expected {
+			t.Errorf("expected content %q, got %q", expected, string(content))
+		}
+	})
+
+	// Test 2: Access a different ID through the parameterized route
+	t.Run("parameterized route", func(t *testing.T) {
+		calledHandler = ""
+		f, err := fsys.Open("/api/users/123")
+		if err != nil {
+			t.Fatalf("Open failed: %v", err)
+		}
+		defer f.Close()
+
+		content, err := io.ReadAll(f)
+		if err != nil {
+			t.Fatalf("ReadAll failed: %v", err)
+		}
+
+		if calledHandler != "parameterized" {
+			t.Errorf("expected parameterized handler to be called, got %q", calledHandler)
+		}
+
+		expected := "from parameterized handler"
+		if string(content) != expected {
+			t.Errorf("expected content %q, got %q", expected, string(content))
+		}
+	})
+}

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/brittcrawford/ragfs"
 	fuseFS "github.com/hanwen/go-fuse/v2/fs"
@@ -25,10 +26,11 @@ func main() {
 	// Parse command-line flags
 	mountPoint := flag.String("mount", "", "Mount point directory (required)")
 	dbPath := flag.String("db", "", "Path to SQLite database file (required)")
+	cacheDB := flag.String("cache", "", "Path to BoltDB cache file (optional, enables persistent caching)")
 	flag.Parse()
 
 	if *mountPoint == "" || *dbPath == "" {
-		fmt.Println("Usage: sqlite-mount -mount <directory> -db <database>")
+		fmt.Println("Usage: sqlite-mount -mount <directory> -db <database> [-cache <cache.db>]")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
@@ -48,6 +50,25 @@ func main() {
 	// Create ragfs filesystem
 	fsys := ragfs.New()
 
+	// Enable BoltDB caching if cache path provided
+	if *cacheDB != "" {
+		log.Printf("Enabling BoltDB persistent cache: %s", *cacheDB)
+		err := fsys.EnableBoltDBCache(ragfs.BoltDBCacheConfig{
+			DBPath:     *cacheDB,
+			MaxEntries: 1000,             // Cache up to 1000 entries per layer
+			TTL:        15 * time.Second, // 15 second TTL for database queries
+		})
+		if err != nil {
+			log.Fatalf("Failed to enable BoltDB cache: %v", err)
+		}
+		defer func() {
+			if err := fsys.CloseBoltDBCache(); err != nil {
+				log.Printf("Failed to close cache: %v", err)
+			}
+		}()
+		log.Printf("BoltDB cache enabled (1000 entries, 15s TTL)")
+	}
+
 	// Map root to list all tables
 	fsys.Map("/", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		tables, err := getTables(db)
@@ -57,12 +78,9 @@ func main() {
 
 		var entries []fs.DirEntry
 		for _, table := range tables {
-			entries = append(entries, &dirEntry{
-				name:  table,
-				isDir: true,
-			})
+			entries = append(entries, ragfs.NewDirEntry(table, true))
 		}
-		return entries, nil
+		return ragfs.NewDirectoryListing(entries), nil
 	})
 
 	// Map /{table} to list all rows in that table
@@ -94,8 +112,8 @@ func main() {
 		var entries []fs.DirEntry
 		// Add special directories
 		entries = append(entries,
-			&dirEntry{name: "_metrics", isDir: true},
-			&dirEntry{name: "_search", isDir: true},
+			ragfs.NewDirEntry("_metrics", true),
+			ragfs.NewDirEntry("_query", true),
 		)
 
 		for rows.Next() {
@@ -106,95 +124,13 @@ func main() {
 			// Create entries for each format
 			idStr := fmt.Sprintf("%v", id)
 			entries = append(entries,
-				&fileEntry{name: fmt.Sprintf("%s.json", idStr), content: nil},
-				&fileEntry{name: fmt.Sprintf("%s.csv", idStr), content: nil},
-				&fileEntry{name: fmt.Sprintf("%s.txt", idStr), content: nil},
+				ragfs.NewFileEntry(fmt.Sprintf("%s.json", idStr), nil),
+				ragfs.NewFileEntry(fmt.Sprintf("%s.csv", idStr), nil),
+				ragfs.NewFileEntry(fmt.Sprintf("%s.txt", idStr), nil),
 			)
 		}
 
-		return entries, nil
-	})
-
-	// Map /{table}/{id}.{ext} to fetch a specific row
-	fsys.Map("/{table}/{file}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		tableName := params["table"]
-		fileName := params["file"]
-
-		// Skip special directories (they have their own handlers)
-		if fileName == "_metrics" || fileName == "_search" {
-			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
-		}
-
-		// Parse filename to extract id and extension
-		ext := filepath.Ext(fileName)
-		if ext == "" {
-			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
-		}
-		ext = ext[1:] // Remove leading dot
-		idStr := strings.TrimSuffix(fileName, "."+ext)
-
-		// Validate extension
-		if ext != "json" && ext != "csv" && ext != "txt" {
-			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
-		}
-
-		// Get primary key column
-		pkCol, err := getPrimaryKey(db, tableName)
-		if err != nil {
-			return nil, err
-		}
-
-		// Fetch the row
-		query := fmt.Sprintf("SELECT * FROM %s WHERE %s = ?", tableName, pkCol)
-		row := db.QueryRowContext(ctx, query, idStr)
-
-		// Get column names
-		columns, err := getColumns(db, tableName)
-		if err != nil {
-			return nil, err
-		}
-
-		// Scan the row into a map
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-		for i := range values {
-			valuePtrs[i] = &values[i]
-		}
-
-		if err := row.Scan(valuePtrs...); err != nil {
-			if err == sql.ErrNoRows {
-				return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
-			}
-			return nil, err
-		}
-
-		// Build the row data map
-		rowData := make(map[string]interface{})
-		for i, col := range columns {
-			rowData[col] = values[i]
-		}
-
-		// Format based on extension
-		var content []byte
-		switch ext {
-		case "json":
-			content, err = json.MarshalIndent(rowData, "", "  ")
-		case "csv":
-			content, err = formatCSV(columns, values)
-		case "txt":
-			content = []byte(formatTXT(rowData))
-		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		return []fs.DirEntry{
-			&fileEntry{
-				name:    fileName,
-				content: content,
-			},
-		}, nil
+		return ragfs.NewDirectoryListing(entries), nil
 	})
 
 	// Map /{table}/_metrics to list available metrics
@@ -210,10 +146,17 @@ func main() {
 			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
 		}
 
+		// Get row count
+		var count int
+		err = db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&count)
+		if err != nil {
+			return nil, err
+		}
+
 		// Return available metrics
-		return []fs.DirEntry{
-			&fileEntry{name: "row_count", content: nil},
-		}, nil
+		return ragfs.NewDirectoryListing([]fs.DirEntry{
+			ragfs.NewFileEntry("row_count", []byte(fmt.Sprintf("%d\n", count))),
+		}), nil
 	})
 
 	// Map /{table}/_metrics/{metric} to fetch metric value
@@ -244,15 +187,12 @@ func main() {
 		}
 
 		return []fs.DirEntry{
-			&fileEntry{
-				name:    metric,
-				content: content,
-			},
+			ragfs.NewFileEntry(metric, content),
 		}, nil
 	})
 
-	// Map /{table}/_search to list search directory (currently no listing needed)
-	fsys.Map("/{table}/_search", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	// Map /{table}/_query to list query directory
+	fsys.Map("/{table}/_query", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		tableName := params["table"]
 
 		// Verify table exists
@@ -264,18 +204,22 @@ func main() {
 			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
 		}
 
-		// Return empty directory (searches are accessed directly via file paths)
-		return []fs.DirEntry{}, nil
+		// Return a README file to make the directory visible
+		readme := "Query this table using the pattern: {column}.{value}.{format}\n" +
+			"Example: email.alice@example.com.json or age.30.csv\n"
+		return ragfs.NewDirectoryListing([]fs.DirEntry{
+			ragfs.NewFileEntry("README", []byte(readme)),
+		}), nil
 	})
 
-	// Map /{table}/_search/{search_file} to perform searches
+	// Map /{table}/_query/{query_file} to perform queries
 	// Format: {column}.{value}.{ext}
-	fsys.Map("/{table}/_search/{search_file}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/{table}/_query/{query_file}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		tableName := params["table"]
-		searchFile := params["search_file"]
+		queryFile := params["query_file"]
 
-		// Parse search file: column.value.ext
-		parts := strings.SplitN(searchFile, ".", 3)
+		// Parse query file: column.value.ext
+		parts := strings.SplitN(queryFile, ".", 3)
 		if len(parts) != 3 {
 			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
 		}
@@ -357,10 +301,87 @@ func main() {
 		}
 
 		return []fs.DirEntry{
-			&fileEntry{
-				name:    searchFile,
-				content: content,
-			},
+			ragfs.NewFileEntry(queryFile, content),
+		}, nil
+	})
+
+	// Map /{table}/{file} to fetch a specific row
+	// This is registered LAST as a catch-all for any files not handled by specific routes above
+	fsys.Map("/{table}/{file}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		tableName := params["table"]
+		fileName := params["file"]
+
+		// Skip special directories (they have their own handlers registered above)
+		if fileName == "_metrics" || fileName == "_query" {
+			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+		}
+
+		// Parse filename to extract id and extension
+		ext := filepath.Ext(fileName)
+		if ext == "" {
+			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+		}
+		ext = ext[1:] // Remove leading dot
+		idStr := strings.TrimSuffix(fileName, "."+ext)
+
+		// Validate extension
+		if ext != "json" && ext != "csv" && ext != "txt" {
+			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+		}
+
+		// Get primary key column
+		pkCol, err := getPrimaryKey(db, tableName)
+		if err != nil {
+			return nil, err
+		}
+
+		// Fetch the row
+		query := fmt.Sprintf("SELECT * FROM %s WHERE %s = ?", tableName, pkCol)
+		row := db.QueryRowContext(ctx, query, idStr)
+
+		// Get column names
+		columns, err := getColumns(db, tableName)
+		if err != nil {
+			return nil, err
+		}
+
+		// Scan the row into a map
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := row.Scan(valuePtrs...); err != nil {
+			if err == sql.ErrNoRows {
+				return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+			}
+			return nil, err
+		}
+
+		// Build the row data map
+		rowData := make(map[string]interface{})
+		for i, col := range columns {
+			rowData[col] = values[i]
+		}
+
+		// Format based on extension
+		var content []byte
+		switch ext {
+		case "json":
+			content, err = json.MarshalIndent(rowData, "", "  ")
+		case "csv":
+			content, err = formatCSV(columns, values)
+		case "txt":
+			content = []byte(formatTXT(rowData))
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		return []fs.DirEntry{
+			ragfs.NewFileEntry(fileName, content),
 		}, nil
 	})
 
@@ -542,25 +563,3 @@ func formatTXT(rowData map[string]interface{}) string {
 	}
 	return buf.String()
 }
-
-type fileEntry struct {
-	name    string
-	content []byte
-}
-
-func (e *fileEntry) Name() string               { return e.name }
-func (e *fileEntry) IsDir() bool                { return false }
-func (e *fileEntry) Type() fs.FileMode          { return 0 }
-func (e *fileEntry) Info() (fs.FileInfo, error) { return nil, nil }
-func (e *fileEntry) Content() []byte            { return e.content }
-
-type dirEntry struct {
-	name  string
-	isDir bool
-}
-
-func (e *dirEntry) Name() string               { return e.name }
-func (e *dirEntry) IsDir() bool                { return e.isDir }
-func (e *dirEntry) Type() fs.FileMode          { return fs.ModeDir }
-func (e *dirEntry) Info() (fs.FileInfo, error) { return nil, nil }
-func (e *dirEntry) Content() []byte            { return nil }
