@@ -116,7 +116,7 @@ func main() {
 		// Add special directories
 		entries = append(entries,
 			&dirEntry{name: "_metrics", isDir: true},
-			&dirEntry{name: "_search", isDir: true},
+			&dirEntry{name: "_query", isDir: true},
 		)
 
 		for rows.Next() {
@@ -134,88 +134,6 @@ func main() {
 		}
 
 		return entries, nil
-	})
-
-	// Map /{table}/{id}.{ext} to fetch a specific row
-	fsys.Map("/{table}/{file}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		tableName := params["table"]
-		fileName := params["file"]
-
-		// Skip special directories (they have their own handlers)
-		if fileName == "_metrics" || fileName == "_search" {
-			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
-		}
-
-		// Parse filename to extract id and extension
-		ext := filepath.Ext(fileName)
-		if ext == "" {
-			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
-		}
-		ext = ext[1:] // Remove leading dot
-		idStr := strings.TrimSuffix(fileName, "."+ext)
-
-		// Validate extension
-		if ext != "json" && ext != "csv" && ext != "txt" {
-			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
-		}
-
-		// Get primary key column
-		pkCol, err := getPrimaryKey(db, tableName)
-		if err != nil {
-			return nil, err
-		}
-
-		// Fetch the row
-		query := fmt.Sprintf("SELECT * FROM %s WHERE %s = ?", tableName, pkCol)
-		row := db.QueryRowContext(ctx, query, idStr)
-
-		// Get column names
-		columns, err := getColumns(db, tableName)
-		if err != nil {
-			return nil, err
-		}
-
-		// Scan the row into a map
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-		for i := range values {
-			valuePtrs[i] = &values[i]
-		}
-
-		if err := row.Scan(valuePtrs...); err != nil {
-			if err == sql.ErrNoRows {
-				return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
-			}
-			return nil, err
-		}
-
-		// Build the row data map
-		rowData := make(map[string]interface{})
-		for i, col := range columns {
-			rowData[col] = values[i]
-		}
-
-		// Format based on extension
-		var content []byte
-		switch ext {
-		case "json":
-			content, err = json.MarshalIndent(rowData, "", "  ")
-		case "csv":
-			content, err = formatCSV(columns, values)
-		case "txt":
-			content = []byte(formatTXT(rowData))
-		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		return []fs.DirEntry{
-			&fileEntry{
-				name:    fileName,
-				content: content,
-			},
-		}, nil
 	})
 
 	// Map /{table}/_metrics to list available metrics
@@ -272,8 +190,8 @@ func main() {
 		}, nil
 	})
 
-	// Map /{table}/_search to list search directory (currently no listing needed)
-	fsys.Map("/{table}/_search", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	// Map /{table}/_query to list query directory (currently no listing needed)
+	fsys.Map("/{table}/_query", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		tableName := params["table"]
 
 		// Verify table exists
@@ -285,18 +203,18 @@ func main() {
 			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
 		}
 
-		// Return empty directory (searches are accessed directly via file paths)
+		// Return empty directory (queries are accessed directly via file paths)
 		return []fs.DirEntry{}, nil
 	})
 
-	// Map /{table}/_search/{search_file} to perform searches
+	// Map /{table}/_query/{query_file} to perform queries
 	// Format: {column}.{value}.{ext}
-	fsys.Map("/{table}/_search/{search_file}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/{table}/_query/{query_file}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		tableName := params["table"]
-		searchFile := params["search_file"]
+		queryFile := params["query_file"]
 
-		// Parse search file: column.value.ext
-		parts := strings.SplitN(searchFile, ".", 3)
+		// Parse query file: column.value.ext
+		parts := strings.SplitN(queryFile, ".", 3)
 		if len(parts) != 3 {
 			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
 		}
@@ -379,7 +297,90 @@ func main() {
 
 		return []fs.DirEntry{
 			&fileEntry{
-				name:    searchFile,
+				name:    queryFile,
+				content: content,
+			},
+		}, nil
+	})
+
+	// Map /{table}/{file} to fetch a specific row
+	// This is registered LAST as a catch-all for any files not handled by specific routes above
+	fsys.Map("/{table}/{file}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		tableName := params["table"]
+		fileName := params["file"]
+
+		// Skip special directories (they have their own handlers registered above)
+		if fileName == "_metrics" || fileName == "_query" {
+			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+		}
+
+		// Parse filename to extract id and extension
+		ext := filepath.Ext(fileName)
+		if ext == "" {
+			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+		}
+		ext = ext[1:] // Remove leading dot
+		idStr := strings.TrimSuffix(fileName, "."+ext)
+
+		// Validate extension
+		if ext != "json" && ext != "csv" && ext != "txt" {
+			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+		}
+
+		// Get primary key column
+		pkCol, err := getPrimaryKey(db, tableName)
+		if err != nil {
+			return nil, err
+		}
+
+		// Fetch the row
+		query := fmt.Sprintf("SELECT * FROM %s WHERE %s = ?", tableName, pkCol)
+		row := db.QueryRowContext(ctx, query, idStr)
+
+		// Get column names
+		columns, err := getColumns(db, tableName)
+		if err != nil {
+			return nil, err
+		}
+
+		// Scan the row into a map
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := row.Scan(valuePtrs...); err != nil {
+			if err == sql.ErrNoRows {
+				return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+			}
+			return nil, err
+		}
+
+		// Build the row data map
+		rowData := make(map[string]interface{})
+		for i, col := range columns {
+			rowData[col] = values[i]
+		}
+
+		// Format based on extension
+		var content []byte
+		switch ext {
+		case "json":
+			content, err = json.MarshalIndent(rowData, "", "  ")
+		case "csv":
+			content, err = formatCSV(columns, values)
+		case "txt":
+			content = []byte(formatTXT(rowData))
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		return []fs.DirEntry{
+			&fileEntry{
+				name:    fileName,
 				content: content,
 			},
 		}, nil
@@ -580,8 +581,13 @@ type dirEntry struct {
 	isDir bool
 }
 
-func (e *dirEntry) Name() string               { return e.name }
-func (e *dirEntry) IsDir() bool                { return e.isDir }
-func (e *dirEntry) Type() fs.FileMode          { return fs.ModeDir }
+func (e *dirEntry) Name() string      { return e.name }
+func (e *dirEntry) IsDir() bool       { return e.isDir }
+func (e *dirEntry) Type() fs.FileMode {
+	if e.isDir {
+		return fs.ModeDir
+	}
+	return 0
+}
 func (e *dirEntry) Info() (fs.FileInfo, error) { return nil, nil }
 func (e *dirEntry) Content() []byte            { return nil }
