@@ -295,10 +295,10 @@ func ExampleFS_jsonPath() {
 func ExampleFS_caching() {
 	fsys := ragfs.New()
 
-	// Enable caching with custom configuration
+	// Enable in-memory LRU caching with custom configuration
 	fsys.EnableCache(ragfs.CacheConfig{
 		MaxEntries: 100,              // Cache up to 100 entries per layer
-		TTL:        60 * time.Second, // Entries expire after 60 seconds
+		TTL:        15 * time.Second, // Entries expire after 15 seconds
 	})
 
 	// Simulate an expensive database query

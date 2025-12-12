@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/brittcrawford/ragfs"
 	fuseFS "github.com/hanwen/go-fuse/v2/fs"
@@ -25,10 +26,11 @@ func main() {
 	// Parse command-line flags
 	mountPoint := flag.String("mount", "", "Mount point directory (required)")
 	dbPath := flag.String("db", "", "Path to SQLite database file (required)")
+	cacheDB := flag.String("cache", "", "Path to BoltDB cache file (optional, enables persistent caching)")
 	flag.Parse()
 
 	if *mountPoint == "" || *dbPath == "" {
-		fmt.Println("Usage: sqlite-mount -mount <directory> -db <database>")
+		fmt.Println("Usage: sqlite-mount -mount <directory> -db <database> [-cache <cache.db>]")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
@@ -47,6 +49,25 @@ func main() {
 
 	// Create ragfs filesystem
 	fsys := ragfs.New()
+
+	// Enable BoltDB caching if cache path provided
+	if *cacheDB != "" {
+		log.Printf("Enabling BoltDB persistent cache: %s", *cacheDB)
+		err := fsys.EnableBoltDBCache(ragfs.BoltDBCacheConfig{
+			DBPath:     *cacheDB,
+			MaxEntries: 1000,             // Cache up to 1000 entries per layer
+			TTL:        15 * time.Second, // 15 second TTL for database queries
+		})
+		if err != nil {
+			log.Fatalf("Failed to enable BoltDB cache: %v", err)
+		}
+		defer func() {
+			if err := fsys.CloseBoltDBCache(); err != nil {
+				log.Printf("Failed to close cache: %v", err)
+			}
+		}()
+		log.Printf("BoltDB cache enabled (1000 entries, 15s TTL)")
+	}
 
 	// Map root to list all tables
 	fsys.Map("/", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
