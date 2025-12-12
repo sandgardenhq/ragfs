@@ -30,8 +30,9 @@ type Handler func(ctx context.Context, path string, params map[string]string) ([
 // It implements the fs.FS interface from the standard library.
 type FS struct {
 	routes      []route
-	cache       *Cache       // nil if caching is disabled
-	boltDBCache *boltDBCache // nil if BoltDB caching is not enabled
+	cache       *Cache           // nil if caching is disabled
+	boltDBCache *boltDBCache     // nil if BoltDB caching is not enabled
+	metrics     *MetricsCollector // nil if metrics collection is disabled
 }
 
 // route represents a pattern-to-handler mapping.
@@ -41,10 +42,14 @@ type route struct {
 }
 
 // New creates a new ragfs filesystem.
+// Metrics collection is enabled by default. Use EnableCache to enable caching.
 func New() *FS {
-	return &FS{
+	fs := &FS{
 		routes: make([]route, 0),
 	}
+	// Enable metrics collection by default (passing nil for cache stats initially)
+	fs.metrics = newMetricsCollector(nil)
+	return fs
 }
 
 // Map registers a handler for the given path pattern.
@@ -477,6 +482,11 @@ func (f *FS) EnableCache(config CacheConfig) {
 	}
 
 	f.cache = newCache(config)
+
+	// Update metrics collector with cache stats
+	if f.metrics != nil {
+		f.metrics.cacheStats = f.cache.stats
+	}
 }
 
 // Invalidate removes a specific path from the cache.
