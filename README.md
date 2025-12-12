@@ -169,6 +169,113 @@ See `cache_bench_test.go` for detailed benchmarks.
 - **TTL**: Balance between data freshness and cache effectiveness. 0 means no expiry.
 - **Memory**: Each cache layer stores entries separately. Monitor with `Stats()`.
 
+## Observability
+
+Every ragfs filesystem automatically exposes runtime metrics through a virtual `/_metrics/` filesystem tree. This provides standardized observability without requiring custom instrumentation code.
+
+### Quick Example
+
+```go
+fsys := ragfs.New()
+
+// Metrics are automatically available
+f, _ := fsys.Open("/_metrics/summary.md")
+content, _ := io.ReadAll(f)
+fmt.Println(string(content))
+```
+
+### Metrics Structure
+
+```
+/_metrics/
+├─ summary.md              # Top-level overview with quick stats
+├─ version.txt             # Schema version (v1)
+├─ cache/
+│  ├─ summary.md           # Cache performance summary
+│  ├─ cache_hit_count      # Total cache hits
+│  ├─ cache_miss_count     # Total cache misses
+│  ├─ cache_hit_rate       # Hit rate (0.0 to 1.0)
+│  ├─ cache_entries        # Current cache entries
+│  └─ cache_evictions      # Total evictions
+├─ io/
+│  ├─ summary.md           # I/O operations summary
+│  ├─ bytes_read_total     # Total bytes read
+│  ├─ bytes_written_total  # Total bytes written
+│  ├─ read_ops_total       # Total read operations
+│  ├─ write_ops_total      # Total write operations
+│  ├─ avg_read_latency_ms  # Average read latency
+│  ├─ avg_write_latency_ms # Average write latency
+│  ├─ last_read_time       # Last read timestamp (RFC3339)
+│  └─ last_write_time      # Last write timestamp (RFC3339)
+├─ system/
+│  ├─ summary.md           # System metrics summary
+│  ├─ uptime_seconds       # Filesystem uptime
+│  ├─ mounted_at           # Mount timestamp (RFC3339)
+│  ├─ process_pid          # Process ID
+│  ├─ memory_rss_bytes     # Memory usage (RSS)
+│  └─ goroutines           # Active goroutines
+└─ errors/
+   ├─ summary.md           # Error metrics summary
+   ├─ errors_total         # Total error count
+   ├─ last_error_time      # Last error timestamp
+   ├─ last_error_message   # Last error (sanitized)
+   ├─ errors_by_type.json  # Errors grouped by type
+   └─ recent_errors.json   # Last 10 errors (sanitized)
+```
+
+### Reading Metrics
+
+Individual metrics are simple text files:
+
+```bash
+$ cat /_metrics/io/read_ops_total
+42
+
+$ cat /_metrics/cache/cache_hit_rate
+0.8523
+```
+
+Summary files provide human-readable Markdown tables:
+
+```bash
+$ cat /_metrics/summary.md
+# Metrics Summary
+
+**Generated:** 2025-12-12T10:30:00Z
+**Uptime:** 2.5h
+
+## Quick Stats
+
+| Metric | Value |
+|--------|-------|
+| Read Operations | 1523 |
+| Write Operations | 42 |
+| Cache Hits | 1298 |
+| Cache Misses | 225 |
+| Total Errors | 3 |
+| Memory (RSS) | 45MB |
+| Goroutines | 12 |
+```
+
+### Thread Safety
+
+All metrics are thread-safe using:
+- **Atomic operations** for counters (lock-free, high performance)
+- **RWMutex** for complex data structures (allows concurrent reads)
+- **Zero overhead** on hot paths (read/write operations)
+
+Tested with 100,000+ concurrent operations using Go's race detector.
+
+### Error Sanitization
+
+Error messages automatically remove sensitive information:
+- API keys and tokens
+- Passwords and secrets
+- Authorization headers
+- Bearer tokens
+
+This ensures metrics can be safely exposed without leaking credentials.
+
 ## FUSE Integration
 
 Mount ragfs as a real filesystem:
@@ -186,6 +293,9 @@ mkdir /tmp/ragfs
 # Access your data as files
 cat /tmp/ragfs/app/name
 cat /tmp/ragfs/database/host
+
+# View metrics
+cat /tmp/ragfs/_metrics/summary.md
 ```
 
 See [FUSE.md](FUSE.md) for complete installation and usage instructions.
