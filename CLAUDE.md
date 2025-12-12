@@ -179,29 +179,74 @@ When working on this project:
 
 ### Verification Requirements
 
-**CRITICAL**: Before claiming any work is complete, you MUST verify three things:
+**MANDATORY RULE**: NO TASK IS COMPLETE until ALL example filesystems have been tested with real builds using foreground shell commands and Unix filesystem tools.
+
+**CRITICAL**: Before claiming any work is complete, you MUST verify:
 
 1. **Code compiles**: `go build ./...` must succeed
 2. **Tests pass**: `go test -v ./...` must pass with no failures
-3. **Real-world verification**: For FUSE mounts and examples, actually run the program and verify it works as expected
+3. **ALL examples verified in FOREGROUND**: Build and test EVERY example filesystem with real commands
 
-**For FUSE mount changes specifically:**
-- Build the mount example: `go build -o ragfs-mount examples/json/main.go`
-- Run with timeout to verify it mounts quickly: Mount should complete in <3 seconds
-- Verify mount point is accessible: `ls /tmp/ragfs-mount` should work
-- Verify files are readable: `cat /tmp/ragfs-mount/app/name` should return content
-- Verify directories list correctly: `ls /tmp/ragfs-mount/app/` should show entries
+**For EVERY task, you MUST test ALL examples:**
+
+1. **JSON Example**:
+   ```bash
+   # Build
+   go build -o json-mount examples/json/main.go
+
+   # Mount and verify
+   ./json-mount -mount /tmp/json-test -config config.json &
+   MOUNT_PID=$!
+   sleep 2
+
+   # Test with Unix tools
+   ls /tmp/json-test/
+   cat /tmp/json-test/app/name
+   ls /tmp/json-test/app/
+
+   # Cleanup
+   kill $MOUNT_PID
+   ```
+
+2. **SQLite Example**:
+   ```bash
+   # Build
+   go build -o sqlite-mount examples/sqlite/main.go
+
+   # Mount and verify
+   ./sqlite-mount -mount /tmp/sqlite-test -db examples/sqlite/example.db &
+   MOUNT_PID=$!
+   sleep 2
+
+   # Test with Unix tools
+   ls /tmp/sqlite-test/
+   ls /tmp/sqlite-test/users/
+   cat /tmp/sqlite-test/users/1.json
+   cat /tmp/sqlite-test/users/_metrics/row_count
+
+   # Cleanup
+   kill $MOUNT_PID
+   ```
+
+**ABSOLUTE REQUIREMENTS:**
+- ❌ **NEVER** use background bash processes for verification
+- ❌ **NEVER** trust output from worktrees when on main branch
+- ❌ **NEVER** claim completion without testing ALL examples
+- ✅ **ALWAYS** run commands in FOREGROUND
+- ✅ **ALWAYS** test with `ls` and `cat` to prove it works
+- ✅ **ALWAYS** show actual command output
 
 **Never claim success based on:**
-- Code that compiles but hasn't been tested
-- Tests that pass but haven't been verified in real use
-- Output from background processes or worktrees when working on main branch
+- Code that compiles but hasn't been tested with ALL examples
+- Tests that pass but haven't been verified in real filesystem usage
+- Output from background processes
 - Assumptions about what "should" work
+- Testing only ONE example when multiple exist
 
 **Evidence required:**
-- Show compilation output
-- Show test output
-- Show real-world usage with actual command output demonstrating the feature works
+- Show compilation output for ALL examples
+- Show test output: `go test -v ./...`
+- Show FOREGROUND execution of EVERY example with Unix tool verification
 
 ## Testing Strategy
 
