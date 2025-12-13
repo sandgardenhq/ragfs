@@ -39,19 +39,19 @@ func GenerateSummaryMarkdown(snapshot MetricsSnapshot) string {
 
 	// Create JSON object with all metrics
 	jsonData := map[string]interface{}{
-		"mounted_at":  FormatTimestamp(snapshot.MountedAt),
-		"cache_hits":  snapshot.CacheHits,
-		"cache_misses": snapshot.CacheMisses,
-		"cache_hit_rate": snapshot.CacheHitRate,
-		"cache_entries": snapshot.CacheEntries,
-		"cache_evictions": snapshot.CacheEvictions,
-		"bytes_read": snapshot.BytesRead,
-		"bytes_written": snapshot.BytesWritten,
-		"read_ops": snapshot.ReadOps,
-		"write_ops": snapshot.WriteOps,
-		"avg_read_latency_ms": snapshot.AvgReadLatencyMs,
+		"mounted_at":           FormatTimestamp(snapshot.MountedAt),
+		"cache_hits":           snapshot.CacheHits,
+		"cache_misses":         snapshot.CacheMisses,
+		"cache_hit_rate":       snapshot.CacheHitRate,
+		"cache_entries":        snapshot.CacheEntries,
+		"cache_evictions":      snapshot.CacheEvictions,
+		"bytes_read":           snapshot.BytesRead,
+		"bytes_written":        snapshot.BytesWritten,
+		"read_ops":             snapshot.ReadOps,
+		"write_ops":            snapshot.WriteOps,
+		"avg_read_latency_ms":  snapshot.AvgReadLatencyMs,
 		"avg_write_latency_ms": snapshot.AvgWriteLatencyMs,
-		"error_count": snapshot.ErrorCount,
+		"error_count":          snapshot.ErrorCount,
 	}
 
 	jsonBytes, _ := json.MarshalIndent(jsonData, "", "  ")
@@ -81,12 +81,12 @@ func GenerateCacheSummaryMarkdown(snapshot MetricsSnapshot) string {
 	sb.WriteString("```json\n")
 
 	jsonData := map[string]interface{}{
-		"cache_hits":      snapshot.CacheHits,
-		"cache_misses":    snapshot.CacheMisses,
-		"cache_hit_rate":  snapshot.CacheHitRate,
-		"cache_entries":   snapshot.CacheEntries,
-		"cache_evictions": snapshot.CacheEvictions,
-		"cache_capacity":  snapshot.CacheCapacity,
+		"cache_hits":        snapshot.CacheHits,
+		"cache_misses":      snapshot.CacheMisses,
+		"cache_hit_rate":    snapshot.CacheHitRate,
+		"cache_entries":     snapshot.CacheEntries,
+		"cache_evictions":   snapshot.CacheEvictions,
+		"cache_capacity":    snapshot.CacheCapacity,
 		"cache_ttl_seconds": snapshot.CacheTTLSeconds,
 	}
 

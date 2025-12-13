@@ -81,8 +81,8 @@ type MetricsSnapshot struct {
 
 // Regex patterns for sanitizing sensitive data
 var (
-	apiKeyPattern  = regexp.MustCompile(`(?i)(api[_-]?key|apikey)[\s:=]+[^\s]+`)
-	tokenPattern   = regexp.MustCompile(`(?i)(token|bearer)(\s+token)?\s+[^\s]+`)
+	apiKeyPattern   = regexp.MustCompile(`(?i)(api[_-]?key|apikey)[\s:=]+[^\s]+`)
+	tokenPattern    = regexp.MustCompile(`(?i)(token|bearer)(\s+token)?\s+[^\s]+`)
 	passwordPattern = regexp.MustCompile(`(?i)(password|passwd|pwd)[\s:=]+[^\s]+`)
 )
 

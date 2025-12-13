@@ -192,14 +192,14 @@ func TestMetricsReadDir(t *testing.T) {
 
 	// Check for expected entries
 	expectedNames := map[string]bool{
-		".":          false,
-		"..":         false,
+		".":           false,
+		"..":          false,
 		"version.txt": false,
-		"summary.md": false,
-		"cache":      false,
-		"io":         false,
-		"errors":     false,
-		"system":     false,
+		"summary.md":  false,
+		"cache":       false,
+		"io":          false,
+		"errors":      false,
+		"system":      false,
 	}
 
 	for _, entry := range entries {
