@@ -741,10 +741,13 @@ func TestHandlerInterface(t *testing.T) {
 }
 
 type testHandler struct {
-	readFunc   func(context.Context, string, map[string]string) ([]fs.DirEntry, error)
-	writeFunc  func(context.Context, string, []byte, map[string]string) error
-	removeFunc func(context.Context, string, map[string]string) error
-	renameFunc func(context.Context, string, string, map[string]string) error
+	readFunc     func(context.Context, string, map[string]string) ([]fs.DirEntry, error)
+	writeFunc    func(context.Context, string, []byte, map[string]string) error
+	removeFunc   func(context.Context, string, map[string]string) error
+	renameFunc   func(context.Context, string, string, map[string]string) error
+	mkdirFunc    func(context.Context, string, map[string]string) error
+	rmdirFunc    func(context.Context, string, map[string]string) error
+	truncateFunc func(context.Context, string, int64, map[string]string) error
 }
 
 func (h *testHandler) Read(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
@@ -773,4 +776,25 @@ func (h *testHandler) Rename(ctx context.Context, oldPath, newPath string, param
 		return h.renameFunc(ctx, oldPath, newPath, params)
 	}
 	return &fs.PathError{Op: "rename", Path: oldPath, Err: fs.ErrPermission}
+}
+
+func (h *testHandler) Mkdir(ctx context.Context, path string, params map[string]string) error {
+	if h.mkdirFunc != nil {
+		return h.mkdirFunc(ctx, path, params)
+	}
+	return &fs.PathError{Op: "mkdir", Path: path, Err: fs.ErrPermission}
+}
+
+func (h *testHandler) Rmdir(ctx context.Context, path string, params map[string]string) error {
+	if h.rmdirFunc != nil {
+		return h.rmdirFunc(ctx, path, params)
+	}
+	return &fs.PathError{Op: "rmdir", Path: path, Err: fs.ErrPermission}
+}
+
+func (h *testHandler) Truncate(ctx context.Context, path string, size int64, params map[string]string) error {
+	if h.truncateFunc != nil {
+		return h.truncateFunc(ctx, path, size, params)
+	}
+	return &fs.PathError{Op: "truncate", Path: path, Err: fs.ErrPermission}
 }

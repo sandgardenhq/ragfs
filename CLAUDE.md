@@ -21,14 +21,56 @@ LLM models are well-trained on filesystem manipulation. By mapping data access p
 4. **Route matching**: Finds the appropriate handler for a given path
 5. **FUSE bridge**: Integrates with go-fuse for mounting as a real filesystem
 
-### Handler Signature
+### Handler Interface
+
+The Handler interface defines all filesystem operations. For read-only handlers, use `NewReadOnlyHandler()` which wraps a simple read function and provides default implementations for write operations.
 
 ```go
-type Handler func(
-    ctx context.Context,    // For cancellation and request-scoped values
-    path string,            // Full path being accessed (e.g., "/emails/2025-10-07")
-    params map[string]string // Extracted parameters (e.g., {"date": "2025-10-07"})
-) ([]fs.DirEntry, error)
+type Handler interface {
+    // Read returns directory entries for the given path.
+    Read(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error)
+
+    // Write writes data to the file at path. Returns fs.ErrPermission if not supported.
+    Write(ctx context.Context, path string, data []byte, params map[string]string) error
+
+    // Remove deletes the file at path. Returns fs.ErrPermission if not supported.
+    Remove(ctx context.Context, path string, params map[string]string) error
+
+    // Rename moves a file from oldPath to newPath. Returns fs.ErrPermission if not supported.
+    Rename(ctx context.Context, oldPath, newPath string, params map[string]string) error
+
+    // Mkdir creates a directory at path. Returns fs.ErrPermission if not supported.
+    Mkdir(ctx context.Context, path string, params map[string]string) error
+
+    // Rmdir removes an empty directory at path. Returns fs.ErrPermission if not supported.
+    Rmdir(ctx context.Context, path string, params map[string]string) error
+
+    // Truncate changes the size of the file at path. Returns fs.ErrPermission if not supported.
+    Truncate(ctx context.Context, path string, size int64, params map[string]string) error
+}
+```
+
+**For read-only handlers**, use the convenience wrapper:
+```go
+fsys.Map("/data", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+    return []fs.DirEntry{ragfs.NewFileEntry("data.txt", []byte("content"))}, nil
+}))
+```
+
+**For writable handlers**, embed `DefaultHandler` and override the methods you need:
+```go
+type MyHandler struct {
+    ragfs.DefaultHandler
+    data map[string][]byte
+}
+
+func (h *MyHandler) Read(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+    // Custom read implementation
+}
+
+func (h *MyHandler) Write(ctx context.Context, path string, data []byte, params map[string]string) error {
+    // Custom write implementation
+}
 ```
 
 Handlers return `[]fs.DirEntry` where each entry must implement a `Content() []byte` method to provide file contents.
@@ -131,14 +173,36 @@ fsys.Invalidate("/users/123")
 fsys.InvalidatePrefix("/users/")  // Clear all users
 ```
 
+### Write Operations
+
+ragfs supports full write operations through the Handler interface:
+
+**FS Methods:**
+- `WriteFile(name string, data []byte) error` - Write data to a file
+- `Remove(name string) error` - Delete a file
+- `Rename(oldPath, newPath string) error` - Rename/move a file
+- `Mkdir(name string) error` - Create a directory
+- `Rmdir(name string) error` - Remove an empty directory
+- `Truncate(name string, size int64) error` - Change file size
+
+**FUSE Support:**
+All write operations are supported via FUSE when mounting with go-fuse:
+- File creation (NodeCreater)
+- File deletion (NodeUnlinker)
+- File rename (NodeRenamer)
+- Directory creation (NodeMkdirer)
+- Directory removal (NodeRmdirer)
+- Truncation (NodeSetattrer)
+
+See `examples/writable/` for a complete in-memory writable filesystem example.
+
 ### Future Enhancements
 
-1. **ReadDir support**: Enable directory listing operations
-2. **Most-specific matching**: Choose most specific route when multiple match
-3. **Wildcard patterns**: Support `/**` for capturing remaining path segments
-4. **Middleware**: Support for logging, metrics, authentication
-5. **Directory entries**: Better support for handlers that return directories
-6. **BoltDB cache adapter**: Durable local caching across process restarts
+1. **Symbolic links**: Support Symlink/Readlink operations
+2. **Extended attributes**: Setxattr/Getxattr/Removexattr
+3. **fs.StatFS interface**: Stat without opening files
+4. **fs.ReadFileFS interface**: Read entire files efficiently
+5. **Hard links**: Link operation support
 
 ## Example Patterns
 
@@ -223,6 +287,28 @@ When working on this project:
    ls /tmp/sqlite-test/users/
    cat /tmp/sqlite-test/users/1.json
    cat /tmp/sqlite-test/users/_metrics/row_count
+
+   # Cleanup
+   kill $MOUNT_PID
+   ```
+
+3. **Writable Example**:
+   ```bash
+   # Build
+   go build -o writable-mount examples/writable/main.go
+
+   # Mount and verify
+   ./writable-mount -mount /tmp/writable-test &
+   MOUNT_PID=$!
+   sleep 2
+
+   # Test write operations
+   echo "hello" > /tmp/writable-test/test.txt
+   cat /tmp/writable-test/test.txt
+   mkdir /tmp/writable-test/mydir
+   ls /tmp/writable-test/
+   rmdir /tmp/writable-test/mydir
+   rm /tmp/writable-test/test.txt
 
    # Cleanup
    kill $MOUNT_PID

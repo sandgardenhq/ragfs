@@ -28,6 +28,9 @@ var _ fuseFS.NodeLookuper = (*FUSENode)(nil)
 var _ fuseFS.NodeCreater = (*FUSENode)(nil)
 var _ fuseFS.NodeUnlinker = (*FUSENode)(nil)
 var _ fuseFS.NodeRenamer = (*FUSENode)(nil)
+var _ fuseFS.NodeMkdirer = (*FUSENode)(nil)
+var _ fuseFS.NodeRmdirer = (*FUSENode)(nil)
+var _ fuseFS.NodeSetattrer = (*FUSENode)(nil)
 
 // NewFUSERoot creates a new FUSE root node from a ragfs filesystem.
 // The root node is always a directory.
@@ -288,6 +291,81 @@ func (n *FUSENode) Rename(ctx context.Context, name string, newParent fuseFS.Ino
 	}
 
 	return fuseFS.OK
+}
+
+// Mkdir creates a new directory.
+func (n *FUSENode) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fuseFS.Inode, syscall.Errno) {
+	// Build the directory path
+	var dirPath string
+	if n.path == "" {
+		dirPath = "/" + name
+	} else {
+		dirPath = "/" + n.path + "/" + name
+	}
+
+	// Create the directory via ragfs
+	err := n.fsys.Mkdir(dirPath)
+	if err != nil {
+		return nil, syscall.EIO
+	}
+
+	// Create child node
+	var childPath string
+	if n.path == "" {
+		childPath = name
+	} else {
+		childPath = n.path + "/" + name
+	}
+
+	child := &FUSENode{
+		fsys:  n.fsys,
+		path:  childPath,
+		isDir: true,
+		uid:   n.uid,
+		gid:   n.gid,
+	}
+
+	// Set entry attributes
+	out.Mode = syscall.S_IFDIR | (mode & 0777)
+	out.Uid = n.uid
+	out.Gid = n.gid
+
+	return n.NewInode(ctx, child, fuseFS.StableAttr{Mode: syscall.S_IFDIR}), fuseFS.OK
+}
+
+// Rmdir removes an empty directory.
+func (n *FUSENode) Rmdir(ctx context.Context, name string) syscall.Errno {
+	// Build the directory path
+	var dirPath string
+	if n.path == "" {
+		dirPath = "/" + name
+	} else {
+		dirPath = "/" + n.path + "/" + name
+	}
+
+	// Remove the directory via ragfs
+	err := n.fsys.Rmdir(dirPath)
+	if err != nil {
+		return syscall.EIO
+	}
+
+	return fuseFS.OK
+}
+
+// Setattr sets file attributes.
+func (n *FUSENode) Setattr(ctx context.Context, fh fuseFS.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
+	ragfsPath := "/" + n.path
+
+	// Handle truncate (FATTR_SIZE)
+	if in.Valid&fuse.FATTR_SIZE != 0 {
+		err := n.fsys.Truncate(ragfsPath, int64(in.Size))
+		if err != nil {
+			return syscall.EIO
+		}
+	}
+
+	// Return updated attributes
+	return n.Getattr(ctx, fh, out)
 }
 
 // FUSEFile implements the FUSE file handle interface.

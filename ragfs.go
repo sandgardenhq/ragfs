@@ -32,6 +32,18 @@ type Handler interface {
 	Write(ctx context.Context, path string, data []byte, params map[string]string) error
 	Remove(ctx context.Context, path string, params map[string]string) error
 	Rename(ctx context.Context, oldPath, newPath string, params map[string]string) error
+
+	// Mkdir creates a directory at the given path.
+	// Returns fs.ErrPermission if directory creation is not supported.
+	Mkdir(ctx context.Context, path string, params map[string]string) error
+
+	// Rmdir removes an empty directory at the given path.
+	// Returns fs.ErrPermission if directory removal is not supported.
+	Rmdir(ctx context.Context, path string, params map[string]string) error
+
+	// Truncate changes the size of the file at the given path.
+	// Returns fs.ErrPermission if truncation is not supported.
+	Truncate(ctx context.Context, path string, size int64, params map[string]string) error
 }
 
 // DefaultHandler provides a default implementation of Handler that returns fs.ErrPermission for all operations.
@@ -55,6 +67,21 @@ func (h *DefaultHandler) Remove(ctx context.Context, path string, params map[str
 // Rename returns fs.ErrPermission.
 func (h *DefaultHandler) Rename(ctx context.Context, oldPath, newPath string, params map[string]string) error {
 	return &fs.PathError{Op: "rename", Path: oldPath, Err: fs.ErrPermission}
+}
+
+// Mkdir returns fs.ErrPermission.
+func (h *DefaultHandler) Mkdir(ctx context.Context, path string, params map[string]string) error {
+	return &fs.PathError{Op: "mkdir", Path: path, Err: fs.ErrPermission}
+}
+
+// Rmdir returns fs.ErrPermission.
+func (h *DefaultHandler) Rmdir(ctx context.Context, path string, params map[string]string) error {
+	return &fs.PathError{Op: "rmdir", Path: path, Err: fs.ErrPermission}
+}
+
+// Truncate returns fs.ErrPermission.
+func (h *DefaultHandler) Truncate(ctx context.Context, path string, size int64, params map[string]string) error {
+	return &fs.PathError{Op: "truncate", Path: path, Err: fs.ErrPermission}
 }
 
 // ReadOnlyHandler wraps a read function to implement the Handler interface.
@@ -288,6 +315,18 @@ func (w *metricsWrapper) Remove(ctx context.Context, path string, params map[str
 
 func (w *metricsWrapper) Rename(ctx context.Context, oldPath, newPath string, params map[string]string) error {
 	return w.handler.Rename(ctx, oldPath, newPath, params)
+}
+
+func (w *metricsWrapper) Mkdir(ctx context.Context, path string, params map[string]string) error {
+	return w.handler.Mkdir(ctx, path, params)
+}
+
+func (w *metricsWrapper) Rmdir(ctx context.Context, path string, params map[string]string) error {
+	return w.handler.Rmdir(ctx, path, params)
+}
+
+func (w *metricsWrapper) Truncate(ctx context.Context, path string, size int64, params map[string]string) error {
+	return w.handler.Truncate(ctx, path, size, params)
 }
 
 func withMetricsPath(handler Handler) Handler {
@@ -899,4 +938,98 @@ func (f *FS) Rename(oldPath, newPath string) error {
 	}
 
 	return nil
+}
+
+// Mkdir creates a new directory at the specified path.
+// It matches the path against registered patterns and calls the handler's Mkdir method.
+// Returns fs.ErrNotExist if no pattern matches.
+// Returns fs.ErrPermission if the handler doesn't support directory creation.
+func (f *FS) Mkdir(name string) error {
+	matched := f.findLongestMatch(name)
+	if matched == nil {
+		return &fs.PathError{Op: "mkdir", Path: name, Err: fs.ErrNotExist}
+	}
+
+	err := matched.route.handler.Mkdir(context.Background(), name, matched.params)
+	if err != nil {
+		return err
+	}
+
+	// Invalidate parent directory cache
+	parent := parentDir(name)
+	if f.cache != nil {
+		f.cache.invalidate(parent)
+	}
+	if f.boltDBCache != nil {
+		f.boltDBCache.invalidate(parent)
+	}
+
+	return nil
+}
+
+// Rmdir removes an empty directory at the specified path.
+// It matches the path against registered patterns and calls the handler's Rmdir method.
+// Returns fs.ErrNotExist if no pattern matches.
+// Returns fs.ErrPermission if the handler doesn't support directory removal.
+func (f *FS) Rmdir(name string) error {
+	matched := f.findLongestMatch(name)
+	if matched == nil {
+		return &fs.PathError{Op: "rmdir", Path: name, Err: fs.ErrNotExist}
+	}
+
+	err := matched.route.handler.Rmdir(context.Background(), name, matched.params)
+	if err != nil {
+		return err
+	}
+
+	// Invalidate cache for removed directory and parent
+	parent := parentDir(name)
+	if f.cache != nil {
+		f.cache.invalidate(name)
+		f.cache.invalidate(parent)
+	}
+	if f.boltDBCache != nil {
+		f.boltDBCache.invalidate(name)
+		f.boltDBCache.invalidate(parent)
+	}
+
+	return nil
+}
+
+// Truncate changes the size of the file at the specified path.
+// It matches the path against registered patterns and calls the handler's Truncate method.
+// Returns fs.ErrNotExist if no pattern matches.
+// Returns fs.ErrPermission if the handler doesn't support truncation.
+func (f *FS) Truncate(name string, size int64) error {
+	matched := f.findLongestMatch(name)
+	if matched == nil {
+		return &fs.PathError{Op: "truncate", Path: name, Err: fs.ErrNotExist}
+	}
+
+	err := matched.route.handler.Truncate(context.Background(), name, size, matched.params)
+	if err != nil {
+		return err
+	}
+
+	// Invalidate cache for the file
+	if f.cache != nil {
+		f.cache.invalidate(name)
+	}
+	if f.boltDBCache != nil {
+		f.boltDBCache.invalidate(name)
+	}
+
+	return nil
+}
+
+// parentDir returns the parent directory of the given path.
+func parentDir(path string) string {
+	// Remove trailing slash if present
+	path = strings.TrimSuffix(path, "/")
+	// Find the last slash
+	lastSlash := strings.LastIndex(path, "/")
+	if lastSlash <= 0 {
+		return "/"
+	}
+	return path[:lastSlash]
 }

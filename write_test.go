@@ -12,15 +12,22 @@ import (
 type WritableHandler struct {
 	ragfs.DefaultHandler
 	written map[string][]byte // stores written data
+	dirs    map[string]bool   // stores created directories
 }
 
 func NewWritableHandler() *WritableHandler {
 	return &WritableHandler{
 		written: make(map[string][]byte),
+		dirs:    make(map[string]bool),
 	}
 }
 
 func (h *WritableHandler) Read(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	// Check if it's a directory
+	if h.dirs[path] {
+		return []fs.DirEntry{}, nil // Empty directory
+	}
+
 	data, ok := h.written[path]
 	if !ok {
 		return nil, &fs.PathError{Op: "read", Path: path, Err: fs.ErrNotExist}
@@ -52,6 +59,22 @@ func (h *WritableHandler) Rename(ctx context.Context, oldPath, newPath string, p
 	}
 	h.written[newPath] = data
 	delete(h.written, oldPath)
+	return nil
+}
+
+func (h *WritableHandler) Mkdir(ctx context.Context, path string, params map[string]string) error {
+	if h.dirs[path] {
+		return &fs.PathError{Op: "mkdir", Path: path, Err: fs.ErrExist}
+	}
+	h.dirs[path] = true
+	return nil
+}
+
+func (h *WritableHandler) Rmdir(ctx context.Context, path string, params map[string]string) error {
+	if !h.dirs[path] {
+		return &fs.PathError{Op: "rmdir", Path: path, Err: fs.ErrNotExist}
+	}
+	delete(h.dirs, path)
 	return nil
 }
 
@@ -393,5 +416,323 @@ func TestRenameWithParameters(t *testing.T) {
 	// Verify new path exists with correct data
 	if string(handler.written["/files/new.txt"]) != "content" {
 		t.Errorf("Expected 'content', got %q", handler.written["/files/new.txt"])
+	}
+}
+
+// TestMkdir tests basic mkdir operations
+func TestMkdir(t *testing.T) {
+	fsys := ragfs.New()
+	handler := NewWritableHandler()
+
+	// Map a writable path
+	fsys.Map("/data/**", handler)
+
+	// Create directory
+	err := fsys.Mkdir("/data/newdir")
+	if err != nil {
+		t.Fatalf("Mkdir failed: %v", err)
+	}
+
+	// Verify directory was created in handler
+	if !handler.dirs["/data/newdir"] {
+		t.Error("Directory should exist in handler")
+	}
+}
+
+// TestMkdirNotFound tests mkdir to unmapped path
+func TestMkdirNotFound(t *testing.T) {
+	fsys := ragfs.New()
+
+	err := fsys.Mkdir("/nonexistent")
+	if err == nil {
+		t.Fatal("Expected error for unmapped path, got nil")
+	}
+
+	pathErr, ok := err.(*fs.PathError)
+	if !ok {
+		t.Fatalf("Expected fs.PathError, got %T", err)
+	}
+
+	if pathErr.Err != fs.ErrNotExist {
+		t.Errorf("Expected ErrNotExist, got %v", pathErr.Err)
+	}
+}
+
+// TestMkdirReadOnly tests mkdir on read-only handler
+func TestMkdirReadOnly(t *testing.T) {
+	fsys := ragfs.New()
+
+	// Map a read-only handler
+	fsys.Map("/readonly/**", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		return []fs.DirEntry{}, nil
+	}))
+
+	// Attempt to mkdir should fail
+	err := fsys.Mkdir("/readonly/newdir")
+	if err == nil {
+		t.Fatal("Expected error for read-only handler, got nil")
+	}
+
+	pathErr, ok := err.(*fs.PathError)
+	if !ok {
+		t.Fatalf("Expected fs.PathError, got %T", err)
+	}
+
+	if pathErr.Err != fs.ErrPermission {
+		t.Errorf("Expected ErrPermission, got %v", pathErr.Err)
+	}
+}
+
+// TestMkdirWithParameters tests mkdir with path parameters
+func TestMkdirWithParameters(t *testing.T) {
+	fsys := ragfs.New()
+	handler := NewWritableHandler()
+
+	// Map a pattern with parameters
+	fsys.Map("/dirs/{name}/**", handler)
+
+	// Create directory
+	err := fsys.Mkdir("/dirs/myproject/subdir")
+	if err != nil {
+		t.Fatalf("Mkdir failed: %v", err)
+	}
+
+	// Verify directory was created
+	if !handler.dirs["/dirs/myproject/subdir"] {
+		t.Error("Directory should exist in handler")
+	}
+}
+
+// TestRmdir tests basic rmdir operations
+func TestRmdir(t *testing.T) {
+	fsys := ragfs.New()
+	handler := NewWritableHandler()
+
+	// Map a writable path
+	fsys.Map("/data/**", handler)
+
+	// Create directory first
+	err := fsys.Mkdir("/data/mydir")
+	if err != nil {
+		t.Fatalf("Mkdir failed: %v", err)
+	}
+
+	// Verify directory exists
+	if !handler.dirs["/data/mydir"] {
+		t.Fatal("Directory should exist before rmdir")
+	}
+
+	// Remove directory
+	err = fsys.Rmdir("/data/mydir")
+	if err != nil {
+		t.Fatalf("Rmdir failed: %v", err)
+	}
+
+	// Verify directory was removed
+	if handler.dirs["/data/mydir"] {
+		t.Error("Directory should not exist after rmdir")
+	}
+}
+
+// TestRmdirNotFound tests rmdir to unmapped path
+func TestRmdirNotFound(t *testing.T) {
+	fsys := ragfs.New()
+
+	err := fsys.Rmdir("/nonexistent")
+	if err == nil {
+		t.Fatal("Expected error for unmapped path, got nil")
+	}
+
+	pathErr, ok := err.(*fs.PathError)
+	if !ok {
+		t.Fatalf("Expected fs.PathError, got %T", err)
+	}
+
+	if pathErr.Err != fs.ErrNotExist {
+		t.Errorf("Expected ErrNotExist, got %v", pathErr.Err)
+	}
+}
+
+// TestRmdirReadOnly tests rmdir on read-only handler
+func TestRmdirReadOnly(t *testing.T) {
+	fsys := ragfs.New()
+
+	// Map a read-only handler
+	fsys.Map("/readonly/**", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		return []fs.DirEntry{}, nil
+	}))
+
+	// Attempt to rmdir should fail
+	err := fsys.Rmdir("/readonly/somedir")
+	if err == nil {
+		t.Fatal("Expected error for read-only handler, got nil")
+	}
+
+	pathErr, ok := err.(*fs.PathError)
+	if !ok {
+		t.Fatalf("Expected fs.PathError, got %T", err)
+	}
+
+	if pathErr.Err != fs.ErrPermission {
+		t.Errorf("Expected ErrPermission, got %v", pathErr.Err)
+	}
+}
+
+// TestRmdirNonexistentDir tests rmdir on non-existent directory
+func TestRmdirNonexistentDir(t *testing.T) {
+	fsys := ragfs.New()
+	handler := NewWritableHandler()
+
+	// Map a writable path
+	fsys.Map("/data/**", handler)
+
+	// Try to remove non-existent directory
+	err := fsys.Rmdir("/data/doesnotexist")
+	if err == nil {
+		t.Fatal("Expected error for non-existent directory, got nil")
+	}
+
+	pathErr, ok := err.(*fs.PathError)
+	if !ok {
+		t.Fatalf("Expected fs.PathError, got %T", err)
+	}
+
+	if pathErr.Err != fs.ErrNotExist {
+		t.Errorf("Expected ErrNotExist, got %v", pathErr.Err)
+	}
+}
+
+// TruncatableHandler implements Handler with Truncate support for testing
+type TruncatableHandler struct {
+	WritableHandler
+}
+
+func NewTruncatableHandler() *TruncatableHandler {
+	return &TruncatableHandler{
+		WritableHandler: WritableHandler{
+			written: make(map[string][]byte),
+			dirs:    make(map[string]bool),
+		},
+	}
+}
+
+func (h *TruncatableHandler) Truncate(ctx context.Context, path string, size int64, params map[string]string) error {
+	data, ok := h.written[path]
+	if !ok {
+		return &fs.PathError{Op: "truncate", Path: path, Err: fs.ErrNotExist}
+	}
+
+	if size < 0 {
+		return &fs.PathError{Op: "truncate", Path: path, Err: fs.ErrInvalid}
+	}
+
+	if int64(len(data)) > size {
+		// Truncate to smaller size
+		h.written[path] = data[:size]
+	} else if int64(len(data)) < size {
+		// Extend with zero bytes
+		newData := make([]byte, size)
+		copy(newData, data)
+		h.written[path] = newData
+	}
+	return nil
+}
+
+// TestTruncate tests basic truncate operations
+func TestTruncate(t *testing.T) {
+	fsys := ragfs.New()
+	handler := NewTruncatableHandler()
+
+	// Map a writable path
+	fsys.Map("/data/**", handler)
+
+	// Write initial data
+	err := fsys.WriteFile("/data/file.txt", []byte("hello world"))
+	if err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Truncate to smaller size
+	err = fsys.Truncate("/data/file.txt", 5)
+	if err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	// Verify truncation
+	if string(handler.written["/data/file.txt"]) != "hello" {
+		t.Errorf("Expected 'hello', got %q", handler.written["/data/file.txt"])
+	}
+}
+
+// TestTruncateExtend tests truncate that extends file
+func TestTruncateExtend(t *testing.T) {
+	fsys := ragfs.New()
+	handler := NewTruncatableHandler()
+
+	// Map a writable path
+	fsys.Map("/data/**", handler)
+
+	// Write initial data
+	err := fsys.WriteFile("/data/file.txt", []byte("hi"))
+	if err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Extend to larger size
+	err = fsys.Truncate("/data/file.txt", 5)
+	if err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	// Verify extension (should be "hi" + 3 zero bytes)
+	if len(handler.written["/data/file.txt"]) != 5 {
+		t.Errorf("Expected length 5, got %d", len(handler.written["/data/file.txt"]))
+	}
+	if string(handler.written["/data/file.txt"][:2]) != "hi" {
+		t.Errorf("Expected first 2 bytes to be 'hi', got %q", handler.written["/data/file.txt"][:2])
+	}
+}
+
+// TestTruncateNotFound tests truncate to unmapped path
+func TestTruncateNotFound(t *testing.T) {
+	fsys := ragfs.New()
+
+	err := fsys.Truncate("/nonexistent", 0)
+	if err == nil {
+		t.Fatal("Expected error for unmapped path, got nil")
+	}
+
+	pathErr, ok := err.(*fs.PathError)
+	if !ok {
+		t.Fatalf("Expected fs.PathError, got %T", err)
+	}
+
+	if pathErr.Err != fs.ErrNotExist {
+		t.Errorf("Expected ErrNotExist, got %v", pathErr.Err)
+	}
+}
+
+// TestTruncateReadOnly tests truncate on read-only handler
+func TestTruncateReadOnly(t *testing.T) {
+	fsys := ragfs.New()
+
+	// Map a read-only handler
+	fsys.Map("/readonly/**", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		return []fs.DirEntry{}, nil
+	}))
+
+	// Attempt to truncate should fail
+	err := fsys.Truncate("/readonly/file.txt", 0)
+	if err == nil {
+		t.Fatal("Expected error for read-only handler, got nil")
+	}
+
+	pathErr, ok := err.(*fs.PathError)
+	if !ok {
+		t.Fatalf("Expected fs.PathError, got %T", err)
+	}
+
+	if pathErr.Err != fs.ErrPermission {
+		t.Errorf("Expected ErrPermission, got %v", pathErr.Err)
 	}
 }
