@@ -36,7 +36,7 @@ func TestBoltDBCachePersistence(t *testing.T) {
 		}
 
 		// Register handler that tracks call count
-		fsys.Map("/data", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		fsys.Map("/data", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 			callCount++
 			return []fs.DirEntry{
 				&testEntry{
@@ -45,7 +45,7 @@ func TestBoltDBCachePersistence(t *testing.T) {
 					isDir:   false,
 				},
 			}, nil
-		})
+		}))
 
 		// First access - should call handler
 		f1, err := fsys.Open("/data")
@@ -89,7 +89,7 @@ func TestBoltDBCachePersistence(t *testing.T) {
 		}
 
 		// Register the SAME handler
-		fsys.Map("/data", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		fsys.Map("/data", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 			callCount++
 			return []fs.DirEntry{
 				&testEntry{
@@ -98,7 +98,7 @@ func TestBoltDBCachePersistence(t *testing.T) {
 					isDir:   false,
 				},
 			}, nil
-		})
+		}))
 
 		// Access the same path - should use cached data, NOT call handler
 		f2, err := fsys.Open("/data")
@@ -157,7 +157,7 @@ func TestBoltDBCacheTTLExpiration(t *testing.T) {
 	defer fsys.CloseBoltDBCache()
 
 	callCount := 0
-	fsys.Map("/data", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/data", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		callCount++
 		return []fs.DirEntry{
 			&testEntry{
@@ -166,7 +166,7 @@ func TestBoltDBCacheTTLExpiration(t *testing.T) {
 				isDir:   false,
 			},
 		}, nil
-	})
+	}))
 
 	// First access - calls handler
 	f1, _ := fsys.Open("/data")
@@ -230,7 +230,7 @@ func TestBoltDBCacheInvalidation(t *testing.T) {
 	defer fsys.CloseBoltDBCache()
 
 	callCount := 0
-	fsys.Map("/users/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/users/{id}", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		callCount++
 		return []fs.DirEntry{
 			&testEntry{
@@ -239,7 +239,7 @@ func TestBoltDBCacheInvalidation(t *testing.T) {
 				isDir:   false,
 			},
 		}, nil
-	})
+	}))
 
 	// Access user 1
 	f1, _ := fsys.Open("/users/1")

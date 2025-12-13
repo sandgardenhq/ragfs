@@ -154,7 +154,7 @@ func main() {
 
 	// Map all possible paths (this is a simple example)
 	// In a real implementation, you'd want more sophisticated routing
-	fsys.Map("/*", handler)
+	fsys.Map("/*", ragfs.NewReadOnlyHandler(handler))
 
 	// Create FUSE root
 	root := ragfs.NewFUSERoot(fsys)

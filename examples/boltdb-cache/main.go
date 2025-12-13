@@ -58,7 +58,7 @@ func main() {
 
 	// Simulate an expensive API call
 	callCount := 0
-	fsys.Map("/users/{username}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/users/{username}", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		callCount++
 		username := params["username"]
 
@@ -88,7 +88,7 @@ func main() {
 				isDir:   false,
 			},
 		}, nil
-	})
+	}))
 
 	// Test 1: First access (cache miss)
 	fmt.Println("--- Test 1: First Access (Cache Miss) ---")

@@ -5,11 +5,11 @@
 // Example usage:
 //
 //	fsys := ragfs.New()
-//	fsys.Map("/emails/{date}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+//	fsys.Map("/emails/{date}", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 //	    // Fetch emails for the given date
 //	    emails := fetchEmails(params["date"])
 //	    return emails, nil
-//	})
+//	}))
 //	f, _ := fsys.Open("/emails/2025-10-07")
 package ragfs
 
@@ -25,9 +25,63 @@ import (
 	"time"
 )
 
-// Handler is a function that handles filesystem operations for a given path.
-// It receives the full path, extracted parameters, and returns directory entries.
-type Handler func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error)
+// Handler is an interface that handles filesystem operations for a given path.
+// It provides methods for Read, Write, Remove, and Rename operations.
+type Handler interface {
+	Read(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error)
+	Write(ctx context.Context, path string, data []byte, params map[string]string) error
+	Remove(ctx context.Context, path string, params map[string]string) error
+	Rename(ctx context.Context, oldPath, newPath string, params map[string]string) error
+}
+
+// DefaultHandler provides a default implementation of Handler that returns fs.ErrPermission for all operations.
+type DefaultHandler struct{}
+
+// Read returns fs.ErrPermission.
+func (h *DefaultHandler) Read(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	return nil, &fs.PathError{Op: "read", Path: path, Err: fs.ErrPermission}
+}
+
+// Write returns fs.ErrPermission.
+func (h *DefaultHandler) Write(ctx context.Context, path string, data []byte, params map[string]string) error {
+	return &fs.PathError{Op: "write", Path: path, Err: fs.ErrPermission}
+}
+
+// Remove returns fs.ErrPermission.
+func (h *DefaultHandler) Remove(ctx context.Context, path string, params map[string]string) error {
+	return &fs.PathError{Op: "remove", Path: path, Err: fs.ErrPermission}
+}
+
+// Rename returns fs.ErrPermission.
+func (h *DefaultHandler) Rename(ctx context.Context, oldPath, newPath string, params map[string]string) error {
+	return &fs.PathError{Op: "rename", Path: oldPath, Err: fs.ErrPermission}
+}
+
+// ReadOnlyHandler wraps a read function to implement the Handler interface.
+// This is useful for creating handlers that only support read operations.
+type ReadOnlyHandler struct {
+	DefaultHandler
+	ReadFunc func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error)
+}
+
+// Read calls the wrapped read function.
+func (h *ReadOnlyHandler) Read(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	return h.ReadFunc(ctx, path, params)
+}
+
+// NewReadOnlyHandler creates a new ReadOnlyHandler with the given read function.
+// This is a convenience function for creating handlers that only need to implement Read.
+//
+// Example:
+//
+//	fsys.Map("/data", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+//	    return []fs.DirEntry{ragfs.NewFileEntry("data.txt", []byte("hello"))}, nil
+//	}))
+func NewReadOnlyHandler(readFunc func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error)) Handler {
+	return &ReadOnlyHandler{
+		ReadFunc: readFunc,
+	}
+}
 
 // FS is a filesystem that maps path patterns to handlers.
 // It implements the fs.FS interface from the standard library.
@@ -60,7 +114,7 @@ func New() *FS {
 // This follows the same pattern as the SQLite example where virtual files are created through handlers.
 func (f *FS) registerMetricsHandlers() {
 	// Root /_metrics directory
-	f.Map("/_metrics", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return NewDirectoryListing([]fs.DirEntry{
 			NewFileEntry("version.txt", []byte("v1")),
 			NewFileEntry("summary.md", []byte(GenerateSummaryMarkdown(f.collector.Snapshot()))),
@@ -69,22 +123,22 @@ func (f *FS) registerMetricsHandlers() {
 			NewDirEntry("system", true),
 			NewDirEntry("errors", true),
 		}), nil
-	})
+	}})
 
 	// /_metrics/version.txt
-	f.Map("/_metrics/version.txt", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/version.txt", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return []fs.DirEntry{NewFileEntry("version.txt", []byte("v1"))}, nil
-	})
+	}})
 
 	// /_metrics/summary.md
-	f.Map("/_metrics/summary.md", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/summary.md", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		content := GenerateSummaryMarkdown(snapshot)
 		return []fs.DirEntry{NewFileEntry("summary.md", []byte(content))}, nil
-	})
+	}})
 
 	// /_metrics/cache directory
-	f.Map("/_metrics/cache", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/cache", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return NewDirectoryListing([]fs.DirEntry{
 			NewFileEntry("summary.md", nil), // Will be populated when accessed
 			NewFileEntry("cache_hit_count", nil),
@@ -93,43 +147,43 @@ func (f *FS) registerMetricsHandlers() {
 			NewFileEntry("cache_entries", nil),
 			NewFileEntry("cache_evictions", nil),
 		}), nil
-	})
+	}})
 
 	// /_metrics/cache/summary.md
-	f.Map("/_metrics/cache/summary.md", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/cache/summary.md", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		content := GenerateCacheSummaryMarkdown(snapshot)
 		return []fs.DirEntry{NewFileEntry("summary.md", []byte(content))}, nil
-	})
+	}})
 
 	// /_metrics/cache files
-	f.Map("/_metrics/cache/cache_hit_count", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/cache/cache_hit_count", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		return []fs.DirEntry{NewFileEntry("cache_hit_count", []byte(fmt.Sprintf("%d\n", snapshot.CacheHits)))}, nil
-	})
+	}})
 
-	f.Map("/_metrics/cache/cache_miss_count", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/cache/cache_miss_count", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		return []fs.DirEntry{NewFileEntry("cache_miss_count", []byte(fmt.Sprintf("%d\n", snapshot.CacheMisses)))}, nil
-	})
+	}})
 
-	f.Map("/_metrics/cache/cache_hit_rate", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/cache/cache_hit_rate", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		return []fs.DirEntry{NewFileEntry("cache_hit_rate", []byte(fmt.Sprintf("%.3f\n", snapshot.CacheHitRate)))}, nil
-	})
+	}})
 
-	f.Map("/_metrics/cache/cache_entries", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/cache/cache_entries", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		return []fs.DirEntry{NewFileEntry("cache_entries", []byte(fmt.Sprintf("%d\n", snapshot.CacheEntries)))}, nil
-	})
+	}})
 
-	f.Map("/_metrics/cache/cache_evictions", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/cache/cache_evictions", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		return []fs.DirEntry{NewFileEntry("cache_evictions", []byte(fmt.Sprintf("%d\n", snapshot.CacheEvictions)))}, nil
-	})
+	}})
 
 	// /_metrics/io directory
-	f.Map("/_metrics/io", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/io", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return NewDirectoryListing([]fs.DirEntry{
 			NewFileEntry("summary.md", nil),
 			NewFileEntry("bytes_read", nil),
@@ -137,68 +191,68 @@ func (f *FS) registerMetricsHandlers() {
 			NewFileEntry("read_ops", nil),
 			NewFileEntry("write_ops", nil),
 		}), nil
-	})
+	}})
 
 	// /_metrics/io/summary.md
-	f.Map("/_metrics/io/summary.md", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/io/summary.md", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		content := GenerateIOSummaryMarkdown(snapshot)
 		return []fs.DirEntry{NewFileEntry("summary.md", []byte(content))}, nil
-	})
+	}})
 
 	// /_metrics/io files
-	f.Map("/_metrics/io/bytes_read", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/io/bytes_read", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		return []fs.DirEntry{NewFileEntry("bytes_read", []byte(fmt.Sprintf("%d\n", snapshot.BytesRead)))}, nil
-	})
+	}})
 
-	f.Map("/_metrics/io/bytes_written", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/io/bytes_written", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		return []fs.DirEntry{NewFileEntry("bytes_written", []byte(fmt.Sprintf("%d\n", snapshot.BytesWritten)))}, nil
-	})
+	}})
 
-	f.Map("/_metrics/io/read_ops", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/io/read_ops", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		return []fs.DirEntry{NewFileEntry("read_ops", []byte(fmt.Sprintf("%d\n", snapshot.ReadOps)))}, nil
-	})
+	}})
 
-	f.Map("/_metrics/io/write_ops", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/io/write_ops", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		return []fs.DirEntry{NewFileEntry("write_ops", []byte(fmt.Sprintf("%d\n", snapshot.WriteOps)))}, nil
-	})
+	}})
 
 	// /_metrics/errors directory
-	f.Map("/_metrics/errors", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/errors", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return NewDirectoryListing([]fs.DirEntry{
 			NewFileEntry("summary.md", nil),
 			NewFileEntry("error_count", nil),
 			NewFileEntry("errors_by_type.json", nil),
 		}), nil
-	})
+	}})
 
 	// /_metrics/errors/summary.md
-	f.Map("/_metrics/errors/summary.md", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/errors/summary.md", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		content := GenerateErrorSummaryMarkdown(snapshot)
 		return []fs.DirEntry{NewFileEntry("summary.md", []byte(content))}, nil
-	})
+	}})
 
 	// /_metrics/errors files
-	f.Map("/_metrics/errors/error_count", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/errors/error_count", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		return []fs.DirEntry{NewFileEntry("error_count", []byte(fmt.Sprintf("%d\n", snapshot.ErrorCount)))}, nil
-	})
+	}})
 
-	f.Map("/_metrics/errors/errors_by_type.json", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/errors/errors_by_type.json", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		snapshot := f.collector.Snapshot()
 		jsonBytes, _ := json.MarshalIndent(snapshot.ErrorsByType, "", "  ")
 		return []fs.DirEntry{NewFileEntry("errors_by_type.json", jsonBytes)}, nil
-	})
+	}})
 
 	// /_metrics/system directory (empty for now)
-	f.Map("/_metrics/system", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	f.Map("/_metrics/system", &ReadOnlyHandler{ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return NewDirectoryListing([]fs.DirEntry{}), nil
-	})
+	}})
 }
 
 var rootPattern *regexp.Regexp
@@ -208,15 +262,17 @@ func init() {
 }
 
 func withMetricsPath(handler Handler) Handler {
-	return func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		entries, err := handler(ctx, path, params)
-		if err != nil {
-			return nil, err
-		}
-		if path == "/" {
-			entries = append(entries, NewDirEntry("_metrics", true))
-		}
-		return entries, nil
+	return &ReadOnlyHandler{
+		ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			entries, err := handler.Read(ctx, path, params)
+			if err != nil {
+				return nil, err
+			}
+			if path == "/" {
+				entries = append(entries, NewDirEntry("_metrics", true))
+			}
+			return entries, nil
+		},
 	}
 }
 
@@ -276,7 +332,7 @@ func (f *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
 	}
 
-	entries, err := matched.route.handler(context.Background(), name, matched.params)
+	entries, err := matched.route.handler.Read(context.Background(), name, matched.params)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +364,7 @@ func (f *FS) Open(name string) (fs.File, error) {
 	if entries == nil {
 		// Cache miss - call the handler
 		f.collector.RecordCacheMiss()
-		entries, err = matched.route.handler(context.Background(), name, matched.params)
+		entries, err = matched.route.handler.Read(context.Background(), name, matched.params)
 		if err != nil {
 			return nil, err
 		}
