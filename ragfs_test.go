@@ -798,3 +798,92 @@ func (h *testHandler) Truncate(ctx context.Context, path string, size int64, par
 	}
 	return &fs.PathError{Op: "truncate", Path: path, Err: fs.ErrPermission}
 }
+
+// TestBytesReadMetric verifies that bytes_read metric is correctly recorded
+func TestBytesReadMetric(t *testing.T) {
+	fsys := ragfs.New()
+
+	// Map a handler with known content (11 bytes: "hello world")
+	fsys.Map("/test", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		return []fs.DirEntry{ragfs.NewFileEntry("test.txt", []byte("hello world"))}, nil
+	}))
+
+	// Verify initial state - bytes_read should be 0
+	snapshot := fsys.Collector().Snapshot()
+	if snapshot.BytesRead != 0 {
+		t.Errorf("Expected initial BytesRead=0, got %d", snapshot.BytesRead)
+	}
+
+	// Read the file
+	f, err := fsys.Open("/test")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+
+	content, err := io.ReadAll(f)
+	f.Close()
+
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+
+	// Verify content was read correctly
+	if string(content) != "hello world" {
+		t.Errorf("Expected 'hello world', got %q", content)
+	}
+
+	// Check metrics - bytes_read should be 11
+	snapshot = fsys.Collector().Snapshot()
+	if snapshot.BytesRead != 11 {
+		t.Errorf("Expected BytesRead=11, got %d", snapshot.BytesRead)
+	}
+
+	// Read again - bytes_read should accumulate
+	f2, _ := fsys.Open("/test")
+	io.ReadAll(f2)
+	f2.Close()
+
+	snapshot = fsys.Collector().Snapshot()
+	if snapshot.BytesRead != 22 {
+		t.Errorf("Expected BytesRead=22 after second read, got %d", snapshot.BytesRead)
+	}
+}
+
+// TestBytesReadMetricMultipleReads verifies partial reads are tracked
+func TestBytesReadMetricMultipleReads(t *testing.T) {
+	fsys := ragfs.New()
+
+	// Map a handler with 100 bytes of content
+	content := make([]byte, 100)
+	for i := range content {
+		content[i] = byte('a' + i%26)
+	}
+
+	fsys.Map("/bigfile", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		return []fs.DirEntry{ragfs.NewFileEntry("bigfile.txt", content)}, nil
+	}))
+
+	// Open and read in chunks
+	f, _ := fsys.Open("/bigfile")
+
+	buf := make([]byte, 25)
+	totalRead := 0
+	for {
+		n, err := f.Read(buf)
+		totalRead += n
+		if err == io.EOF {
+			break
+		}
+	}
+	f.Close()
+
+	if totalRead != 100 {
+		t.Errorf("Expected to read 100 bytes total, got %d", totalRead)
+	}
+
+	// Check metrics
+	snapshot := fsys.Collector().Snapshot()
+	if snapshot.BytesRead != 100 {
+		t.Errorf("Expected BytesRead=100, got %d", snapshot.BytesRead)
+	}
+}

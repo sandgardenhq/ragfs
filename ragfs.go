@@ -488,8 +488,10 @@ func (f *FS) Open(name string) (fs.File, error) {
 		}
 
 		return &file{
-			name:   entry.Name(),
-			reader: bytes.NewReader(content),
+			name:      entry.Name(),
+			reader:    bytes.NewReader(content),
+			collector: f.collector,
+			startTime: time.Now(),
 		}, nil
 	}
 
@@ -498,8 +500,10 @@ func (f *FS) Open(name string) (fs.File, error) {
 
 // file implements fs.File
 type file struct {
-	name   string
-	reader *bytes.Reader
+	name      string
+	reader    *bytes.Reader
+	collector *Collector
+	startTime time.Time
 }
 
 // Stat returns file information.
@@ -512,7 +516,11 @@ func (f *file) Stat() (fs.FileInfo, error) {
 
 // Read reads up to len(p) bytes into p.
 func (f *file) Read(p []byte) (int, error) {
-	return f.reader.Read(p)
+	n, err := f.reader.Read(p)
+	if n > 0 && f.collector != nil {
+		f.collector.RecordRead(int64(n), time.Since(f.startTime))
+	}
+	return n, err
 }
 
 // Close closes the file.
@@ -838,6 +846,12 @@ func (f *FS) Stats() *CacheStats {
 	}
 
 	return f.cache.stats
+}
+
+// Collector returns the metrics collector for this filesystem.
+// This can be used to access metrics snapshots.
+func (f *FS) Collector() *Collector {
+	return f.collector
 }
 
 // WriteFile writes data to the named file.
