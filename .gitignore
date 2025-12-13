@@ -45,6 +45,10 @@ htmlcov/
 *.log
 ragfs-mount
 
+# Example binaries
+examples/*/sqlite-mount
+examples/*/ragfs-mount
+
 # Worktrees
 .worktrees/
 
