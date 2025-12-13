@@ -261,26 +261,52 @@ func init() {
 	rootPattern = regexp.MustCompile(`^(/|/\*|/\*\*|/\*/\*\*|/\{[^/}]+\})$`)
 }
 
-func withMetricsPath(handler Handler) Handler {
-	return &ReadOnlyHandler{
-		ReadFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-			entries, err := handler.Read(ctx, path, params)
-			if err != nil {
-				return nil, err
-			}
-			if path == "/" {
-				entries = append(entries, NewDirEntry("_metrics", true))
-			}
-			return entries, nil
-		},
+// metricsWrapper wraps a handler to add _metrics to directory listings
+// while preserving write capabilities (Write, Remove, Rename).
+type metricsWrapper struct {
+	handler Handler
+}
+
+func (w *metricsWrapper) Read(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	entries, err := w.handler.Read(ctx, path, params)
+	if err != nil {
+		return nil, err
 	}
+	if path == "/" {
+		entries = append(entries, NewDirEntry("_metrics", true))
+	}
+	return entries, nil
+}
+
+func (w *metricsWrapper) Write(ctx context.Context, path string, data []byte, params map[string]string) error {
+	return w.handler.Write(ctx, path, data, params)
+}
+
+func (w *metricsWrapper) Remove(ctx context.Context, path string, params map[string]string) error {
+	return w.handler.Remove(ctx, path, params)
+}
+
+func (w *metricsWrapper) Rename(ctx context.Context, oldPath, newPath string, params map[string]string) error {
+	return w.handler.Rename(ctx, oldPath, newPath, params)
+}
+
+func withMetricsPath(handler Handler) Handler {
+	return &metricsWrapper{handler: handler}
 }
 
 // Map registers a handler for the given path pattern.
 // Patterns can include parameters in curly braces, e.g., "/emails/{date}".
 // When a path is accessed, the first matching pattern's handler is called.
 func (f *FS) Map(pattern string, handler Handler) error {
-	// Match root patterns: /, /*, /**, /*/**, or /{param} (single param, not followed by /)
+	// Always register the original handler first
+	f.routes = append(f.routes, route{
+		pattern: pattern,
+		handler: handler,
+	})
+
+	// For root patterns (/, /*, /**, /*/**, /{param}), also register a wrapped version
+	// that adds _metrics to directory listings. This is registered LAST so it wins
+	// when findLongestMatch picks the last matching route.
 	if rootPattern.MatchString(pattern) {
 		f.routes = append(f.routes, route{
 			pattern: pattern,
@@ -288,10 +314,6 @@ func (f *FS) Map(pattern string, handler Handler) error {
 		})
 	}
 
-	f.routes = append(f.routes, route{
-		pattern: pattern,
-		handler: handler,
-	})
 	return nil
 }
 
@@ -777,4 +799,104 @@ func (f *FS) Stats() *CacheStats {
 	}
 
 	return f.cache.stats
+}
+
+// WriteFile writes data to the named file.
+// It matches the path against registered patterns and calls the matching handler's Write method.
+// If caching is enabled, the cache is invalidated for the given path after a successful write.
+// Returns fs.ErrNotExist if no pattern matches.
+// Returns fs.ErrPermission if the handler doesn't support writes.
+//
+// Example:
+//
+//	err := fsys.WriteFile("/data/file.txt", []byte("hello world"))
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+func (f *FS) WriteFile(name string, data []byte) error {
+	matched := f.findLongestMatch(name)
+	if matched == nil {
+		return &fs.PathError{Op: "write", Path: name, Err: fs.ErrNotExist}
+	}
+
+	// Measure write latency
+	start := time.Now()
+
+	// Call the handler's Write method
+	err := matched.route.handler.Write(context.Background(), name, data, matched.params)
+
+	latency := time.Since(start)
+
+	if err != nil {
+		return err
+	}
+
+	// Invalidate cache for this path on successful write
+	if f.cache != nil {
+		f.cache.invalidate(name)
+	}
+	if f.boltDBCache != nil {
+		f.boltDBCache.invalidate(name)
+	}
+
+	// Update metrics
+	f.collector.RecordWrite(int64(len(data)), latency)
+
+	return nil
+}
+
+// Remove removes the named file.
+// It finds the handler for the path and calls its Remove method.
+// If successful, it invalidates the cache for that path.
+// Returns fs.ErrNotExist if no pattern matches the path.
+func (f *FS) Remove(name string) error {
+	matched := f.findLongestMatch(name)
+	if matched == nil {
+		return &fs.PathError{Op: "remove", Path: name, Err: fs.ErrNotExist}
+	}
+
+	// Call the handler's Remove method
+	err := matched.route.handler.Remove(context.Background(), name, matched.params)
+	if err != nil {
+		return err
+	}
+
+	// Invalidate cache for this path on successful remove
+	if f.cache != nil {
+		f.cache.invalidate(name)
+	}
+	if f.boltDBCache != nil {
+		f.boltDBCache.invalidate(name)
+	}
+
+	return nil
+}
+
+// Rename renames a file from oldPath to newPath.
+// It finds the handler for the oldPath and calls its Rename method.
+// If successful, it invalidates the cache for both old and new paths.
+// Returns fs.ErrNotExist if no pattern matches the oldPath.
+func (f *FS) Rename(oldPath, newPath string) error {
+	matched := f.findLongestMatch(oldPath)
+	if matched == nil {
+		return &fs.PathError{Op: "rename", Path: oldPath, Err: fs.ErrNotExist}
+	}
+
+	// Call the handler's Rename method
+	err := matched.route.handler.Rename(context.Background(), oldPath, newPath, matched.params)
+	if err != nil {
+		return err
+	}
+
+	// Invalidate cache for both paths on successful rename
+	if f.cache != nil {
+		f.cache.invalidate(oldPath)
+		f.cache.invalidate(newPath)
+	}
+	if f.boltDBCache != nil {
+		f.boltDBCache.invalidate(oldPath)
+		f.boltDBCache.invalidate(newPath)
+	}
+
+	return nil
 }

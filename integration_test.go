@@ -18,7 +18,7 @@ func TestIntegration_MetricsAvailable(t *testing.T) {
 	// Add a simple handler
 	fsys.Map("/test", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return []fs.DirEntry{&testFileEntry{name: "test.txt", content: []byte("hello")}}, nil
-}))
+	}))
 
 	// Access /_metrics/version.txt
 	file, err := fsys.Open("/_metrics/version.txt")
@@ -50,7 +50,7 @@ func TestIntegration_CacheMetricsTracking(t *testing.T) {
 	fsys.Map("/test", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		callCount++
 		return []fs.DirEntry{&testFileEntry{name: "test.txt", content: []byte("hello")}}, nil
-}))
+	}))
 
 	// First access - cache miss
 	file1, _ := fsys.Open("/test")
@@ -85,7 +85,7 @@ func TestIntegration_SummaryGeneration(t *testing.T) {
 	// Add a handler and trigger some activity
 	fsys.Map("/test", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return []fs.DirEntry{&testFileEntry{name: "test.txt", content: []byte("hello")}}, nil
-}))
+	}))
 
 	// Access the test path to generate some metrics
 	file, _ := fsys.Open("/test")

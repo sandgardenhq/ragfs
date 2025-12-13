@@ -21,7 +21,7 @@ func TestMetricsRouteWithWildcardHandler(t *testing.T) {
 		return []fs.DirEntry{
 			&testFileEntry{name: "user.txt", content: []byte("from wildcard")},
 		}, nil
-}))
+	}))
 
 	// Test that /_metrics/version.txt is accessible
 	file, err := fsys.Open("/_metrics/version.txt")
@@ -55,7 +55,7 @@ func TestMetricsRouteWithRootHandler(t *testing.T) {
 		return []fs.DirEntry{
 			&testFileEntry{name: "root.txt", content: []byte("from root")},
 		}, nil
-}))
+	}))
 
 	// Test that /_metrics/summary.md is accessible
 	file, err := fsys.Open("/_metrics/summary.md")
@@ -87,7 +87,7 @@ func TestAllMetricsPathsAccessible(t *testing.T) {
 		return []fs.DirEntry{
 			&testFileEntry{name: "other.txt", content: []byte("other")},
 		}, nil
-}))
+	}))
 
 	testCases := []struct {
 		path        string
@@ -141,15 +141,15 @@ func TestMetricsLongestMatchPriority(t *testing.T) {
 	// Add various conflicting patterns
 	fsys.Map("/", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return nil, fs.ErrNotExist
-}))
+	}))
 
 	fsys.Map("/*", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return nil, fs.ErrNotExist
-}))
+	}))
 
 	fsys.Map("/{path}/**", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return nil, fs.ErrNotExist
-}))
+	}))
 
 	// Despite all these patterns, /_metrics should still work
 	file, err := fsys.Open("/_metrics/version.txt")
@@ -177,7 +177,7 @@ func TestMetricsReadDir(t *testing.T) {
 		return []fs.DirEntry{
 			&testFileEntry{name: "wildcard.txt", content: []byte("wild")},
 		}, nil
-}))
+	}))
 
 	// ReadDir on /_metrics should work
 	entries, err := fsys.ReadDir("/_metrics")
@@ -263,7 +263,7 @@ func TestMetricsWithComplexUserRoutes(t *testing.T) {
 		return []fs.DirEntry{
 			&testFileEntry{name: "user.txt", content: []byte("user resource")},
 		}, nil
-}))
+	}))
 
 	// Pattern 2: Two-level wildcard
 	fsys.Map("/{a}/{b}", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
@@ -271,7 +271,7 @@ func TestMetricsWithComplexUserRoutes(t *testing.T) {
 		return []fs.DirEntry{
 			&testFileEntry{name: "file.txt", content: []byte("two-level")},
 		}, nil
-}))
+	}))
 
 	// Pattern 3: Wildcard catch-all
 	fsys.Map("/*", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
@@ -279,7 +279,7 @@ func TestMetricsWithComplexUserRoutes(t *testing.T) {
 		return []fs.DirEntry{
 			&testFileEntry{name: "wildcard.txt", content: []byte("catch-all")},
 		}, nil
-}))
+	}))
 
 	// /_metrics paths should still work and NOT call user handlers
 	userHandlerCalled = false
@@ -313,7 +313,7 @@ func TestNonMetricsPaths(t *testing.T) {
 		return []fs.DirEntry{
 			&testFileEntry{name: "_metrics", content: []byte("user data")},
 		}, nil
-}))
+	}))
 
 	// /other/_metrics should call user handler
 	file, err := fsys.Open("/other/_metrics")
@@ -345,13 +345,13 @@ func TestMetricsWithDeeplyNestedPatterns(t *testing.T) {
 		return []fs.DirEntry{
 			&testFileEntry{name: "nested.txt", content: []byte("nested three levels")},
 		}, nil
-}))
+	}))
 
 	fsys.Map("/{x}/{y}/{z}/{w}", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return []fs.DirEntry{
 			&testFileEntry{name: "deeply.txt", content: []byte("nested four levels")},
 		}, nil
-}))
+	}))
 
 	// /_metrics should still work despite these deeply nested patterns
 	file, err := fsys.Open("/_metrics/cache/cache_hit_count")
@@ -384,7 +384,7 @@ func TestMetricsWithCaching(t *testing.T) {
 		return []fs.DirEntry{
 			&testFileEntry{name: "cached.txt", content: []byte("cached")},
 		}, nil
-}))
+	}))
 
 	// First access - should work
 	file1, err := fsys.Open("/_metrics/version.txt")

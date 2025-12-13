@@ -44,7 +44,7 @@ func TestBoltDBCacheBasicOperations(t *testing.T) {
 				isDir:   false,
 			},
 		}, nil
-}))
+	}))
 
 	// First call - should call handler (cache miss)
 	f1, err := fsys.Open("/data")

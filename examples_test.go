@@ -191,7 +191,7 @@ func ExampleFS() {
 				content: content,
 			},
 		}, nil
-}))
+	}))
 
 	// Now you can read from the filesystem
 	f, _ := fsys.Open("/config/database")
@@ -232,7 +232,7 @@ func ExampleFS_emails() {
 		}
 
 		return entries, nil
-}))
+	}))
 
 	// This demonstrates the pattern - in practice you would:
 	// entries, _ := fs.ReadDir(fsys, "/emails/2025-10-07")
@@ -327,7 +327,7 @@ func ExampleFS_caching() {
 				content: content,
 			},
 		}, nil
-}))
+	}))
 
 	// First read - calls the handler (cache miss)
 	f1, _ := fsys.Open("/users/123")
@@ -385,7 +385,7 @@ func ExampleFS_cachingWithPrefix() {
 				content: content,
 			},
 		}, nil
-}))
+	}))
 
 	// Access multiple paths
 	paths := []string{

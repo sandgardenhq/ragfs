@@ -12,7 +12,7 @@ import (
 // TestFUSENodeGetattrRoot tests that root node returns directory attributes
 func TestFUSENodeGetattrRoot(t *testing.T) {
 	fsys := ragfs.New()
-	root := ragfs.NewFUSERoot(fsys)
+	root := ragfs.NewFUSERoot(fsys, uint32(syscall.Getuid()), uint32(syscall.Getgid()))
 
 	ctx := context.Background()
 	out := &fuse.AttrOut{}
@@ -40,7 +40,7 @@ func TestFUSEIntegration(t *testing.T) {
 	// 4. Proper distinction between files and directories
 
 	fsys := ragfs.New()
-	root := ragfs.NewFUSERoot(fsys)
+	root := ragfs.NewFUSERoot(fsys, uint32(syscall.Getuid()), uint32(syscall.Getgid()))
 
 	// Verify root is a directory
 	ctx := context.Background()

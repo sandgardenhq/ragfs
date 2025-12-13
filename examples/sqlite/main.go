@@ -333,8 +333,12 @@ func main() {
 		}, nil
 	}))
 
-	// Create FUSE root
-	root := ragfs.NewFUSERoot(fsys)
+	// Get current user's UID/GID
+	uid := uint32(syscall.Getuid())
+	gid := uint32(syscall.Getgid())
+
+	// Create FUSE root with current user's UID/GID
+	root := ragfs.NewFUSERoot(fsys, uid, gid)
 
 	log.Printf("About to mount at %s", *mountPoint)
 
