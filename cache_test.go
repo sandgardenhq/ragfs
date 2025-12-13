@@ -82,12 +82,12 @@ func TestCacheHitAndMiss(t *testing.T) {
 	})
 
 	callCount := 0
-	fsys.Map("/test", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/test", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		callCount++
 		return []fs.DirEntry{
 			&testEntry{name: "file.txt", content: []byte("content")},
 		}, nil
-	})
+	}))
 
 	// First call - cache miss
 	f1, err := fsys.Open("/test")
@@ -133,12 +133,12 @@ func TestCacheTTLExpiry(t *testing.T) {
 	})
 
 	callCount := 0
-	fsys.Map("/test", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/test", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		callCount++
 		return []fs.DirEntry{
 			&testEntry{name: "file.txt", content: []byte(fmt.Sprintf("call-%d", callCount))},
 		}, nil
-	})
+	}))
 
 	// First call
 	f1, _ := fsys.Open("/test")
@@ -175,12 +175,12 @@ func TestCacheNoTTL(t *testing.T) {
 	})
 
 	callCount := 0
-	fsys.Map("/test", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/test", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		callCount++
 		return []fs.DirEntry{
 			&testEntry{name: "file.txt", content: []byte(fmt.Sprintf("call-%d", callCount))},
 		}, nil
-	})
+	}))
 
 	// First call
 	f1, _ := fsys.Open("/test")
@@ -227,13 +227,13 @@ func TestCacheLRUEviction(t *testing.T) {
 	})
 
 	callCounts := make(map[string]int)
-	fsys.Map("/{name}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/{name}", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		name := params["name"]
 		callCounts[name]++
 		return []fs.DirEntry{
 			&testEntry{name: name, content: []byte(name)},
 		}, nil
-	})
+	}))
 
 	// Fill cache with 2 entries
 	fsys.Open("/file1")
@@ -276,12 +276,12 @@ func TestInvalidate(t *testing.T) {
 	})
 
 	callCount := 0
-	fsys.Map("/test", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/test", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		callCount++
 		return []fs.DirEntry{
 			&testEntry{name: "file.txt", content: []byte(fmt.Sprintf("call-%d", callCount))},
 		}, nil
-	})
+	}))
 
 	// First call
 	f1, _ := fsys.Open("/test")
@@ -322,13 +322,13 @@ func TestInvalidatePrefix(t *testing.T) {
 	})
 
 	callCounts := make(map[string]int)
-	fsys.Map("/users/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/users/{id}", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		id := params["id"]
 		callCounts[id]++
 		return []fs.DirEntry{
 			&testEntry{name: id, content: []byte(id)},
 		}, nil
-	})
+	}))
 
 	// Cache some entries
 	fsys.Open("/users/1")
@@ -389,14 +389,14 @@ func TestConcurrentAccess(t *testing.T) {
 	var callCount int
 	var mu sync.Mutex
 
-	fsys.Map("/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/{id}", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		mu.Lock()
 		callCount++
 		mu.Unlock()
 		return []fs.DirEntry{
 			&testEntry{name: params["id"], content: []byte(params["id"])},
 		}, nil
-	})
+	}))
 
 	// Concurrent reads
 	const goroutines = 50
@@ -456,11 +456,11 @@ func TestConcurrentInvalidation(t *testing.T) {
 		TTL:        1 * time.Minute,
 	})
 
-	fsys.Map("/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/{id}", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return []fs.DirEntry{
 			&testEntry{name: params["id"], content: []byte(params["id"])},
 		}, nil
-	})
+	}))
 
 	const goroutines = 20
 
@@ -502,11 +502,11 @@ func TestStatsAccuracy(t *testing.T) {
 		TTL:        1 * time.Minute,
 	})
 
-	fsys.Map("/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/{id}", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return []fs.DirEntry{
 			&testEntry{name: params["id"], content: []byte(params["id"])},
 		}, nil
-	})
+	}))
 
 	// First access to /1 - miss in both layers
 	fsys.Open("/1")
@@ -548,12 +548,12 @@ func TestBothCacheLayers(t *testing.T) {
 	})
 
 	handlerCallCount := 0
-	fsys.Map("/test", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/test", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		handlerCallCount++
 		return []fs.DirEntry{
 			&testEntry{name: "file.txt", content: []byte("content")},
 		}, nil
-	})
+	}))
 
 	// First Open - both layers miss
 	f1, _ := fsys.Open("/test")

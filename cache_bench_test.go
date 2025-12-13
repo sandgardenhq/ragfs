@@ -22,7 +22,7 @@ func BenchmarkCachedVsNonCached(b *testing.B) {
 
 	b.Run("without-cache", func(b *testing.B) {
 		fsys := New()
-		fsys.Map("/data", expensiveHandler)
+		fsys.Map("/data", NewReadOnlyHandler(expensiveHandler))
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -41,7 +41,7 @@ func BenchmarkCachedVsNonCached(b *testing.B) {
 			MaxEntries: 1000,
 			TTL:        60 * time.Second,
 		})
-		fsys.Map("/data", expensiveHandler)
+		fsys.Map("/data", NewReadOnlyHandler(expensiveHandler))
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -63,11 +63,11 @@ func BenchmarkCacheHit(b *testing.B) {
 		TTL:        60 * time.Second,
 	})
 
-	fsys.Map("/data", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/data", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return []fs.DirEntry{
 			&testEntry{name: "data.txt", content: []byte("cached result"), isDir: false},
 		}, nil
-	})
+	}))
 
 	// Warm the cache
 	f, _ := fsys.Open("/data")
@@ -93,12 +93,12 @@ func BenchmarkCacheMiss(b *testing.B) {
 	})
 
 	callCount := 0
-	fsys.Map("/data/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/data/{id}", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		callCount++
 		return []fs.DirEntry{
 			&testEntry{name: "data.txt", content: []byte(fmt.Sprintf("result-%s", params["id"])), isDir: false},
 		}, nil
-	})
+	}))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -137,13 +137,13 @@ func BenchmarkConcurrentReads(b *testing.B) {
 				})
 			}
 
-			fsys.Map("/data", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			fsys.Map("/data", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 				// Simulate small work
 				time.Sleep(100 * time.Microsecond)
 				return []fs.DirEntry{
 					&testEntry{name: "data.txt", content: []byte("result"), isDir: false},
 				}, nil
-			})
+			}))
 
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
@@ -172,7 +172,7 @@ func BenchmarkCacheSizes(b *testing.B) {
 				TTL:        60 * time.Second,
 			})
 
-			fsys.Map("/data/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			fsys.Map("/data/{id}", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 				return []fs.DirEntry{
 					&testEntry{
 						name:    fmt.Sprintf("%s.txt", params["id"]),
@@ -180,7 +180,7 @@ func BenchmarkCacheSizes(b *testing.B) {
 						isDir:   false,
 					},
 				}, nil
-			})
+			}))
 
 			// Access pattern: cycle through 2x cache size
 			paths := make([]string, size*2)
@@ -211,11 +211,11 @@ func BenchmarkInvalidation(b *testing.B) {
 			TTL:        60 * time.Second,
 		})
 
-		fsys.Map("/data/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		fsys.Map("/data/{id}", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 			return []fs.DirEntry{
 				&testEntry{name: "data.txt", content: []byte("result"), isDir: false},
 			}, nil
-		})
+		}))
 
 		// Populate cache
 		for i := 0; i < 100; i++ {
@@ -236,11 +236,11 @@ func BenchmarkInvalidation(b *testing.B) {
 			TTL:        60 * time.Second,
 		})
 
-		fsys.Map("/data/{category}/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+		fsys.Map("/data/{category}/{id}", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 			return []fs.DirEntry{
 				&testEntry{name: "data.txt", content: []byte("result"), isDir: false},
 			}, nil
-		})
+		}))
 
 		// Populate cache with different categories
 		for cat := 0; cat < 10; cat++ {
@@ -277,11 +277,11 @@ func BenchmarkTTLExpiry(b *testing.B) {
 				TTL:        sc.ttl,
 			})
 
-			fsys.Map("/data", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			fsys.Map("/data", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 				return []fs.DirEntry{
 					&testEntry{name: "data.txt", content: []byte("result"), isDir: false},
 				}, nil
-			})
+			}))
 
 			// Warm cache
 			f, _ := fsys.Open("/data")
@@ -308,7 +308,7 @@ func BenchmarkLRUEviction(b *testing.B) {
 		TTL:        60 * time.Second,
 	})
 
-	fsys.Map("/data/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/data/{id}", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return []fs.DirEntry{
 			&testEntry{
 				name:    fmt.Sprintf("%s.txt", params["id"]),
@@ -316,7 +316,7 @@ func BenchmarkLRUEviction(b *testing.B) {
 				isDir:   false,
 			},
 		}, nil
-	})
+	}))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -349,11 +349,11 @@ func BenchmarkContentCacheLayer(b *testing.B) {
 		largeContent[i] = byte(i % 256)
 	}
 
-	fsys.Map("/data", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/data", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return []fs.DirEntry{
 			&testEntry{name: "large.bin", content: largeContent, isDir: false},
 		}, nil
-	})
+	}))
 
 	b.ResetTimer()
 	b.SetBytes(int64(len(largeContent)))
@@ -375,11 +375,11 @@ func BenchmarkStatsOverhead(b *testing.B) {
 		TTL:        60 * time.Second,
 	})
 
-	fsys.Map("/data", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/data", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		return []fs.DirEntry{
 			&testEntry{name: "data.txt", content: []byte("result"), isDir: false},
 		}, nil
-	})
+	}))
 
 	// Warm cache
 	f, _ := fsys.Open("/data")

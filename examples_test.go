@@ -80,10 +80,10 @@ func TestJSONHandler(t *testing.T) {
 	}
 
 	// Map a wildcard pattern (for now, we'll use specific paths)
-	fsys.Map("/config/name", handler)
-	fsys.Map("/config/version", handler)
-	fsys.Map("/config/database/host", handler)
-	fsys.Map("/config/database", handler)
+	fsys.Map("/config/name", ragfs.NewReadOnlyHandler(handler))
+	fsys.Map("/config/version", ragfs.NewReadOnlyHandler(handler))
+	fsys.Map("/config/database/host", ragfs.NewReadOnlyHandler(handler))
+	fsys.Map("/config/database", ragfs.NewReadOnlyHandler(handler))
 
 	// Test reading /config/name
 	t.Run("read config name", func(t *testing.T) {
@@ -169,7 +169,7 @@ func ExampleFS() {
 	})
 
 	// Map a handler for /config/{key} pattern
-	fsys.Map("/config/{key}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/config/{key}", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		key := params["key"]
 
 		// Look up the value in our config
@@ -191,7 +191,7 @@ func ExampleFS() {
 				content: content,
 			},
 		}, nil
-	})
+	}))
 
 	// Now you can read from the filesystem
 	f, _ := fsys.Open("/config/database")
@@ -209,7 +209,7 @@ func ExampleFS_emails() {
 	fsys := ragfs.New()
 
 	// Map emails by date
-	fsys.Map("/emails/{date}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/emails/{date}", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		date := params["date"]
 
 		// In a real implementation, this would query a database or API
@@ -232,7 +232,7 @@ func ExampleFS_emails() {
 		}
 
 		return entries, nil
-	})
+	}))
 
 	// This demonstrates the pattern - in practice you would:
 	// entries, _ := fs.ReadDir(fsys, "/emails/2025-10-07")
@@ -287,7 +287,7 @@ func ExampleFS_jsonPath() {
 		}, nil
 	}
 
-	fsys.Map("/users/alice/email", handler)
+	fsys.Map("/users/alice/email", ragfs.NewReadOnlyHandler(handler))
 
 	// Reading /users/alice/email returns just the email
 	f, _ := fsys.Open("/users/alice/email")
@@ -310,7 +310,7 @@ func ExampleFS_caching() {
 
 	// Simulate an expensive database query
 	callCount := 0
-	fsys.Map("/users/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/users/{id}", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		callCount++ // Track how many times handler is called
 
 		// Simulate expensive operation (e.g., database query)
@@ -327,7 +327,7 @@ func ExampleFS_caching() {
 				content: content,
 			},
 		}, nil
-	})
+	}))
 
 	// First read - calls the handler (cache miss)
 	f1, _ := fsys.Open("/users/123")
@@ -376,7 +376,7 @@ func ExampleFS_cachingWithPrefix() {
 	fsys.EnableCache(ragfs.CacheConfig{})
 
 	callCount := 0
-	fsys.Map("/data/{category}/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/data/{category}/{id}", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		callCount++
 		content := []byte(fmt.Sprintf("%s-%s", params["category"], params["id"]))
 		return []fs.DirEntry{
@@ -385,7 +385,7 @@ func ExampleFS_cachingWithPrefix() {
 				content: content,
 			},
 		}, nil
-	})
+	}))
 
 	// Access multiple paths
 	paths := []string{

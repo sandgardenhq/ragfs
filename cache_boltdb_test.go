@@ -35,7 +35,7 @@ func TestBoltDBCacheBasicOperations(t *testing.T) {
 
 	// Register handler that tracks call count
 	callCount := 0
-	fsys.Map("/data", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/data", NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		callCount++
 		return []fs.DirEntry{
 			&testEntry{
@@ -44,7 +44,7 @@ func TestBoltDBCacheBasicOperations(t *testing.T) {
 				isDir:   false,
 			},
 		}, nil
-	})
+	}))
 
 	// First call - should call handler (cache miss)
 	f1, err := fsys.Open("/data")

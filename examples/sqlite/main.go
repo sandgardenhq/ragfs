@@ -70,7 +70,7 @@ func main() {
 	}
 
 	// Map root to list all tables
-	fsys.Map("/", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		tables, err := getTables(db)
 		if err != nil {
 			return nil, err
@@ -81,10 +81,10 @@ func main() {
 			entries = append(entries, ragfs.NewDirEntry(table, true))
 		}
 		return ragfs.NewDirectoryListing(entries), nil
-	})
+	}))
 
 	// Map /{table} to list all rows in that table
-	fsys.Map("/{table}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/{table}", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		tableName := params["table"]
 
 		// Verify table exists
@@ -137,10 +137,10 @@ func main() {
 		}
 
 		return entries, nil
-	})
+	}))
 
 	// Map /{table}/_query to list query directory
-	fsys.Map("/{table}/_query", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/{table}/_query", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		tableName := params["table"]
 
 		// Verify table exists
@@ -158,11 +158,11 @@ func main() {
 		return ragfs.NewDirectoryListing([]fs.DirEntry{
 			ragfs.NewFileEntry("README", []byte(readme)),
 		}), nil
-	})
+	}))
 
 	// Map /{table}/_query/{query_file} to perform queries
 	// Format: {column}.{value}.{ext}
-	fsys.Map("/{table}/_query/{query_file}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/{table}/_query/{query_file}", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		tableName := params["table"]
 		queryFile := params["query_file"]
 
@@ -251,11 +251,11 @@ func main() {
 		return []fs.DirEntry{
 			ragfs.NewFileEntry(queryFile, content),
 		}, nil
-	})
+	}))
 
 	// Map /{table}/{file} to fetch a specific row
 	// This is registered LAST as a catch-all for any files not handled by specific routes above
-	fsys.Map("/{table}/{file}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/{table}/{file}", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		tableName := params["table"]
 		fileName := params["file"]
 
@@ -331,10 +331,14 @@ func main() {
 		return []fs.DirEntry{
 			ragfs.NewFileEntry(fileName, content),
 		}, nil
-	})
+	}))
 
-	// Create FUSE root
-	root := ragfs.NewFUSERoot(fsys)
+	// Get current user's UID/GID
+	uid := uint32(syscall.Getuid())
+	gid := uint32(syscall.Getgid())
+
+	// Create FUSE root with current user's UID/GID
+	root := ragfs.NewFUSERoot(fsys, uid, gid)
 
 	log.Printf("About to mount at %s", *mountPoint)
 

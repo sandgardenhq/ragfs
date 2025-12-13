@@ -20,8 +20,10 @@ func TestNewFS(t *testing.T) {
 func TestMapRoute(t *testing.T) {
 	fsys := ragfs.New()
 
-	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		return nil, nil
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			return nil, nil
+		},
 	}
 
 	err := fsys.Map("/test", handler)
@@ -36,15 +38,17 @@ func TestOpenStaticFile(t *testing.T) {
 	called := false
 	content := []byte("hello world")
 
-	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		called = true
-		if path != "/hello.txt" {
-			t.Errorf("expected path /hello.txt, got %s", path)
-		}
-		// Return a single file entry
-		return []fs.DirEntry{
-			&testFileEntry{name: "hello.txt", content: content},
-		}, nil
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			called = true
+			if path != "/hello.txt" {
+				t.Errorf("expected path /hello.txt, got %s", path)
+			}
+			// Return a single file entry
+			return []fs.DirEntry{
+				&testFileEntry{name: "hello.txt", content: content},
+			}, nil
+		},
 	}
 
 	fsys.Map("/hello.txt", handler)
@@ -103,13 +107,15 @@ func TestPathParameters(t *testing.T) {
 	var capturedParams map[string]string
 	var capturedPath string
 
-	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		capturedPath = path
-		capturedParams = params
-		content := []byte("email content for " + params["date"])
-		return []fs.DirEntry{
-			&testFileEntry{name: "email.txt", content: content},
-		}, nil
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			capturedPath = path
+			capturedParams = params
+			content := []byte("email content for " + params["date"])
+			return []fs.DirEntry{
+				&testFileEntry{name: "email.txt", content: content},
+			}, nil
+		},
 	}
 
 	fsys.Map("/emails/{date}", handler)
@@ -141,12 +147,14 @@ func TestWildcardPattern(t *testing.T) {
 	fsys := ragfs.New()
 
 	var capturedPath string
-	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		capturedPath = path
-		content := []byte("wildcard match: " + path)
-		return []fs.DirEntry{
-			&testFileEntry{name: "file.txt", content: content},
-		}, nil
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			capturedPath = path
+			content := []byte("wildcard match: " + path)
+			return []fs.DirEntry{
+				&testFileEntry{name: "file.txt", content: content},
+			}, nil
+		},
 	}
 
 	// Register a wildcard pattern that matches any path
@@ -186,10 +194,12 @@ func TestReadDirFS(t *testing.T) {
 
 	var capturedPath string
 	var capturedParams map[string]string
-	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		capturedPath = path
-		capturedParams = params
-		return entries, nil
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			capturedPath = path
+			capturedParams = params
+			return entries, nil
+		},
 	}
 
 	fsys.Map("/docs/{category}", handler)
@@ -237,8 +247,10 @@ func TestReadDirHandlerError(t *testing.T) {
 	fsys := ragfs.New()
 
 	expectedErr := fs.ErrPermission
-	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		return nil, expectedErr
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			return nil, expectedErr
+		},
 	}
 
 	fsys.Map("/protected/**", handler)
@@ -260,8 +272,10 @@ func TestDirFileReadDir(t *testing.T) {
 		&testFileEntry{name: "e.txt", content: []byte("e")},
 	}
 
-	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		return entries, nil
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			return entries, nil
+		},
 	}
 
 	fsys.Map("/items/**", handler)
@@ -402,8 +416,10 @@ func TestDirFileStatReadClose(t *testing.T) {
 		&testFileEntry{name: "file2.txt", content: []byte("content2")},
 	}
 
-	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		return entries, nil
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			return entries, nil
+		},
 	}
 
 	fsys.Map("/mydir/**", handler)
@@ -465,10 +481,12 @@ func TestFileStat(t *testing.T) {
 	fsys := ragfs.New()
 
 	content := []byte("test file content here")
-	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		return []fs.DirEntry{
-			&testFileEntry{name: "data.txt", content: content},
-		}, nil
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			return []fs.DirEntry{
+				&testFileEntry{name: "data.txt", content: content},
+			}, nil
+		},
 	}
 
 	fsys.Map("/single/**", handler)
@@ -507,10 +525,12 @@ func TestFileStat(t *testing.T) {
 func TestOpenSingleDirectoryEntry(t *testing.T) {
 	fsys := ragfs.New()
 
-	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		return []fs.DirEntry{
-			&testFileEntry{name: "subdir", isDir: true},
-		}, nil
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			return []fs.DirEntry{
+				&testFileEntry{name: "subdir", isDir: true},
+			}, nil
+		},
 	}
 
 	fsys.Map("/dirs/**", handler)
@@ -530,8 +550,10 @@ func TestOpenSingleDirectoryEntry(t *testing.T) {
 func TestOpenEmptyHandlerResult(t *testing.T) {
 	fsys := ragfs.New()
 
-	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		return []fs.DirEntry{}, nil
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			return []fs.DirEntry{}, nil
+		},
 	}
 
 	fsys.Map("/empty/**", handler)
@@ -552,10 +574,12 @@ func TestOpenEmptyHandlerResult(t *testing.T) {
 func TestOpenFileWithoutContentMethod(t *testing.T) {
 	fsys := ragfs.New()
 
-	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		return []fs.DirEntry{
-			&noContentEntry{name: "broken.txt"},
-		}, nil
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			return []fs.DirEntry{
+				&noContentEntry{name: "broken.txt"},
+			}, nil
+		},
 	}
 
 	fsys.Map("/broken/**", handler)
@@ -586,8 +610,10 @@ func TestOpenHandlerError(t *testing.T) {
 	fsys := ragfs.New()
 
 	expectedErr := fs.ErrPermission
-	handler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		return nil, expectedErr
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			return nil, expectedErr
+		},
 	}
 
 	fsys.Map("/error/**", handler)
@@ -607,26 +633,30 @@ func TestRouteSpecificity(t *testing.T) {
 	var calledHandler string
 
 	// Parameterized route: /api/users/{id}
-	paramHandler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		calledHandler = "parameterized"
-		// Don't validate the ID here - just accept whatever is passed
-		return []fs.DirEntry{
-			&testFileEntry{
-				name:    "param.txt",
-				content: []byte("from parameterized handler"),
-			},
-		}, nil
+	paramHandler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			calledHandler = "parameterized"
+			// Don't validate the ID here - just accept whatever is passed
+			return []fs.DirEntry{
+				&testFileEntry{
+					name:    "param.txt",
+					content: []byte("from parameterized handler"),
+				},
+			}, nil
+		},
 	}
 
 	// More specific static route: /api/users/special
-	specificHandler := func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		calledHandler = "specific"
-		return []fs.DirEntry{
-			&testFileEntry{
-				name:    "specific.txt",
-				content: []byte("from specific handler"),
-			},
-		}, nil
+	specificHandler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			calledHandler = "specific"
+			return []fs.DirEntry{
+				&testFileEntry{
+					name:    "specific.txt",
+					content: []byte("from specific handler"),
+				},
+			}, nil
+		},
 	}
 
 	// Register routes - order matters: more specific should be registered first
@@ -681,4 +711,90 @@ func TestRouteSpecificity(t *testing.T) {
 			t.Errorf("expected content %q, got %q", expected, string(content))
 		}
 	})
+}
+
+func TestHandlerInterface(t *testing.T) {
+	fsys := ragfs.New()
+
+	handler := &testHandler{
+		readFunc: func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+			return []fs.DirEntry{ragfs.NewFileEntry("test.txt", []byte("hello"))}, nil
+		},
+	}
+
+	fsys.Map("/test", handler)
+
+	f, err := fsys.Open("/test")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+
+	if string(data) != "hello" {
+		t.Errorf("Expected 'hello', got %q", string(data))
+	}
+}
+
+type testHandler struct {
+	readFunc     func(context.Context, string, map[string]string) ([]fs.DirEntry, error)
+	writeFunc    func(context.Context, string, []byte, map[string]string) error
+	removeFunc   func(context.Context, string, map[string]string) error
+	renameFunc   func(context.Context, string, string, map[string]string) error
+	mkdirFunc    func(context.Context, string, map[string]string) error
+	rmdirFunc    func(context.Context, string, map[string]string) error
+	truncateFunc func(context.Context, string, int64, map[string]string) error
+}
+
+func (h *testHandler) Read(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	if h.readFunc != nil {
+		return h.readFunc(ctx, path, params)
+	}
+	return nil, &fs.PathError{Op: "read", Path: path, Err: fs.ErrPermission}
+}
+
+func (h *testHandler) Write(ctx context.Context, path string, data []byte, params map[string]string) error {
+	if h.writeFunc != nil {
+		return h.writeFunc(ctx, path, data, params)
+	}
+	return &fs.PathError{Op: "write", Path: path, Err: fs.ErrPermission}
+}
+
+func (h *testHandler) Remove(ctx context.Context, path string, params map[string]string) error {
+	if h.removeFunc != nil {
+		return h.removeFunc(ctx, path, params)
+	}
+	return &fs.PathError{Op: "remove", Path: path, Err: fs.ErrPermission}
+}
+
+func (h *testHandler) Rename(ctx context.Context, oldPath, newPath string, params map[string]string) error {
+	if h.renameFunc != nil {
+		return h.renameFunc(ctx, oldPath, newPath, params)
+	}
+	return &fs.PathError{Op: "rename", Path: oldPath, Err: fs.ErrPermission}
+}
+
+func (h *testHandler) Mkdir(ctx context.Context, path string, params map[string]string) error {
+	if h.mkdirFunc != nil {
+		return h.mkdirFunc(ctx, path, params)
+	}
+	return &fs.PathError{Op: "mkdir", Path: path, Err: fs.ErrPermission}
+}
+
+func (h *testHandler) Rmdir(ctx context.Context, path string, params map[string]string) error {
+	if h.rmdirFunc != nil {
+		return h.rmdirFunc(ctx, path, params)
+	}
+	return &fs.PathError{Op: "rmdir", Path: path, Err: fs.ErrPermission}
+}
+
+func (h *testHandler) Truncate(ctx context.Context, path string, size int64, params map[string]string) error {
+	if h.truncateFunc != nil {
+		return h.truncateFunc(ctx, path, size, params)
+	}
+	return &fs.PathError{Op: "truncate", Path: path, Err: fs.ErrPermission}
 }

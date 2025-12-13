@@ -154,10 +154,14 @@ func main() {
 
 	// Map all possible paths (this is a simple example)
 	// In a real implementation, you'd want more sophisticated routing
-	fsys.Map("/*", handler)
+	fsys.Map("/*", ragfs.NewReadOnlyHandler(handler))
 
-	// Create FUSE root
-	root := ragfs.NewFUSERoot(fsys)
+	// Get current user's UID/GID
+	uid := uint32(syscall.Getuid())
+	gid := uint32(syscall.Getgid())
+
+	// Create FUSE root with current user's UID/GID
+	root := ragfs.NewFUSERoot(fsys, uid, gid)
 
 	log.Printf("About to mount at %s", *mountPoint)
 

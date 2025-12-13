@@ -55,7 +55,7 @@ func main() {
 
 	// Simulate fetching data
 	callCount := 0
-	fsys.Map("/items/{id}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+	fsys.Map("/items/{id}", ragfs.NewReadOnlyHandler(func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
 		callCount++
 		id := params["id"]
 
@@ -71,7 +71,7 @@ func main() {
 				isDir:   false,
 			},
 		}, nil
-	})
+	}))
 
 	// Test 1: Cache hits and misses
 	fmt.Println("=== Test 1: Cache Hits and Misses ===")
