@@ -92,6 +92,13 @@ func main() {
 		if err != nil {
 			return nil, err
 		}
+		if tableName == "" {
+			var entries []fs.DirEntry
+			for _, table := range tables {
+				entries = append(entries, ragfs.NewDirEntry(table, true))
+			}
+			return ragfs.NewDirectoryListing(entries), nil
+		}
 		if !contains(tables, tableName) {
 			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
 		}
@@ -112,7 +119,6 @@ func main() {
 		var entries []fs.DirEntry
 		// Add special directories
 		entries = append(entries,
-			ragfs.NewDirEntry("_metrics", true),
 			ragfs.NewDirEntry("_query", true),
 		)
 
@@ -130,65 +136,7 @@ func main() {
 			)
 		}
 
-		return ragfs.NewDirectoryListing(entries), nil
-	})
-
-	// Map /{table}/_metrics to list available metrics
-	fsys.Map("/{table}/_metrics", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		tableName := params["table"]
-
-		// Verify table exists
-		tables, err := getTables(db)
-		if err != nil {
-			return nil, err
-		}
-		if !contains(tables, tableName) {
-			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
-		}
-
-		// Get row count
-		var count int
-		err = db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&count)
-		if err != nil {
-			return nil, err
-		}
-
-		// Return available metrics
-		return ragfs.NewDirectoryListing([]fs.DirEntry{
-			ragfs.NewFileEntry("row_count", []byte(fmt.Sprintf("%d\n", count))),
-		}), nil
-	})
-
-	// Map /{table}/_metrics/{metric} to fetch metric value
-	fsys.Map("/{table}/_metrics/{metric}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-		tableName := params["table"]
-		metric := params["metric"]
-
-		// Verify table exists
-		tables, err := getTables(db)
-		if err != nil {
-			return nil, err
-		}
-		if !contains(tables, tableName) {
-			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
-		}
-
-		var content []byte
-		switch metric {
-		case "row_count":
-			var count int
-			err := db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&count)
-			if err != nil {
-				return nil, err
-			}
-			content = []byte(fmt.Sprintf("%d\n", count))
-		default:
-			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
-		}
-
-		return []fs.DirEntry{
-			ragfs.NewFileEntry(metric, content),
-		}, nil
+		return entries, nil
 	})
 
 	// Map /{table}/_query to list query directory
@@ -312,7 +260,7 @@ func main() {
 		fileName := params["file"]
 
 		// Skip special directories (they have their own handlers registered above)
-		if fileName == "_metrics" || fileName == "_query" {
+		if fileName == "_query" {
 			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
 		}
 

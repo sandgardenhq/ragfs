@@ -16,8 +16,11 @@ package ragfs
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -60,6 +63,14 @@ func New() *FS {
 // Patterns can include parameters in curly braces, e.g., "/emails/{date}".
 // When a path is accessed, the first matching pattern's handler is called.
 func (f *FS) Map(pattern string, handler Handler) error {
+	// Match root patterns: /, /*, /**, /*/**, or /{param} (single param, not followed by /)
+	if rootPattern.MatchString(pattern) {
+		f.routes = append(f.routes, route{
+			pattern: pattern,
+			handler: withMetricsPath(handler),
+		})
+	}
+
 	f.routes = append(f.routes, route{
 		pattern: pattern,
 		handler: handler,
@@ -78,12 +89,11 @@ func (f *FS) findLongestMatch(name string) *routeMatch {
 	var matched routeMatch
 	for _, r := range f.routes {
 		if match, p := matchPattern(r.pattern, name); match {
-			if len(matched.route.pattern) < len(r.pattern) {
+			if len(matched.route.pattern) < len(r.pattern) || (len(matched.route.pattern) == len(r.pattern) && !strings.Contains(r.pattern, "{")) {
 				matched = routeMatch{
 					route:  r,
 					params: p,
 				}
-				continue
 			}
 		}
 	}
@@ -136,6 +146,7 @@ func (f *FS) Open(name string) (fs.File, error) {
 
 	if entries == nil {
 		// Cache miss - call the handler
+		f.collector.RecordCacheMiss()
 		entries, err = matched.route.handler(context.Background(), name, matched.params)
 		if err != nil {
 			return nil, err
@@ -147,6 +158,9 @@ func (f *FS) Open(name string) (fs.File, error) {
 		} else if f.cache != nil {
 			f.cache.setHandler(name, entries)
 		}
+	} else {
+		// Cache hit
+		f.collector.RecordCacheHit()
 	}
 
 	if len(entries) == 0 {
