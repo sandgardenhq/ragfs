@@ -11,10 +11,12 @@ ragfs leverages the fact that LLM models are well-trained on understanding and m
 - **Pattern-based routing**: Map path patterns like `/emails/{date}` to custom handlers
 - **Parameter extraction**: Automatically extract and pass path parameters to handlers
 - **Standard interface**: Implements Go's `fs.FS` for seamless integration
-- **FUSE support**: Mount as a real filesystem using FUSE (Linux/macOS)
-- **Flexible handlers**: User-defined functions that fetch data from any source
+- **Read and write support**: Full CRUD operations via the Handler interface
+- **FUSE support**: Mount as a real filesystem with read/write operations (Linux/macOS)
+- **High-performance caching**: Optional two-layer in-memory LRU cache with TTL
+- **BoltDB persistent cache**: Optional disk-backed cache that survives restarts
+- **Built-in observability**: `/_metrics` virtual filesystem for runtime monitoring
 - **Type-safe**: Leverages Go's type system for reliable filesystem operations
-- **High-performance caching**: Optional in-memory LRU cache with TTL support
 
 ## Quick Start
 
@@ -31,78 +33,97 @@ import (
 )
 
 func main() {
-    // Create a new filesystem
     fsys := ragfs.New()
 
-    // Map a pattern to a handler
-    fsys.Map("/config/{key}", func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
-        // Fetch data based on the key parameter
-        value := getConfig(params["key"])
-
-        // Return as a file entry
-        return []fs.DirEntry{
-            &FileEntry{
-                name:    params["key"] + ".json",
-                content: []byte(value),
-            },
-        }, nil
-    })
+    // Map a pattern to a read-only handler
+    fsys.Map("/config/{key}", ragfs.NewReadOnlyHandler(
+        func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+            value := getConfig(params["key"])
+            return []fs.DirEntry{
+                ragfs.NewFileEntry(params["key"]+".json", []byte(value)),
+            }, nil
+        },
+    ))
 
     // Read from the filesystem
-    f, _ := fsys.Open("/config/database")
+    f, _ := fsys.Open("config/database")
     content, _ := io.ReadAll(f)
     os.Stdout.Write(content)
 }
 ```
 
-## Example Use Cases
+## Handler Interface
 
-### JSON Configuration Access
-
-Map filesystem paths to JSON object queries:
+Handler is an interface that defines all filesystem operations for a path pattern:
 
 ```go
-// Reading /config/database/host queries config.database.host
-fsys.Map("/config/{section}/{key}", jsonHandler)
+type Handler interface {
+    Read(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error)
+    Write(ctx context.Context, path string, data []byte, params map[string]string) error
+    Remove(ctx context.Context, path string, params map[string]string) error
+    Rename(ctx context.Context, oldPath, newPath string, params map[string]string) error
+    Mkdir(ctx context.Context, path string, params map[string]string) error
+    Rmdir(ctx context.Context, path string, params map[string]string) error
+    Truncate(ctx context.Context, path string, size int64, params map[string]string) error
+}
 ```
 
-### Email Retrieval by Date
+Handlers return `[]fs.DirEntry` where each entry must implement a `Content() []byte` method. Use the built-in `NewFileEntry(name, content)` helper to create entries.
 
-Fetch emails using date-based paths:
+### Read-Only Handlers
+
+For handlers that only need to read data, use `NewReadOnlyHandler`:
 
 ```go
-// Reading /emails/2025-10-07 fetches emails from that date
-fsys.Map("/emails/{date}", emailHandler)
+fsys.Map("/emails/{date}", ragfs.NewReadOnlyHandler(
+    func(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+        emails := fetchEmails(params["date"])
+        return []fs.DirEntry{ragfs.NewFileEntry("emails.json", emails)}, nil
+    },
+))
 ```
 
-### User Profile Access
+### Writable Handlers
 
-Access user data via filesystem paths:
+For handlers that support write operations, embed `DefaultHandler` and override the methods you need:
 
 ```go
-// Reading /users/alice/profile fetches alice's profile
-fsys.Map("/users/{id}/profile", profileHandler)
+type MyHandler struct {
+    ragfs.DefaultHandler
+    data map[string][]byte
+}
+
+func (h *MyHandler) Read(ctx context.Context, path string, params map[string]string) ([]fs.DirEntry, error) {
+    content := h.data[path]
+    return []fs.DirEntry{ragfs.NewFileEntry("data.txt", content)}, nil
+}
+
+func (h *MyHandler) Write(ctx context.Context, path string, data []byte, params map[string]string) error {
+    h.data[path] = data
+    return nil
+}
 ```
 
-## Handler Function
+### Write Operations
 
-Handlers are functions that fetch data for a given path:
+The FS type exposes these methods for write operations:
 
 ```go
-type Handler func(
-    ctx context.Context,      // Request context
-    path string,              // Full path (e.g., "/emails/2025-10-07")
-    params map[string]string, // Extracted params (e.g., {"date": "2025-10-07"})
-) ([]fs.DirEntry, error)
+fsys.WriteFile("path/to/file", []byte("content")) // Write data to a file
+fsys.Remove("path/to/file")                        // Delete a file
+fsys.Rename("old/path", "new/path")                // Rename/move a file
+fsys.Mkdir("path/to/dir")                          // Create a directory
+fsys.Rmdir("path/to/dir")                          // Remove an empty directory
+fsys.Truncate("path/to/file", 0)                   // Change file size
 ```
 
-Your handler must return directory entries that implement a `Content() []byte` method to provide file contents.
+Write operations automatically invalidate relevant cache entries.
 
 ## Caching
 
-ragfs includes an optional high-performance in-memory LRU cache to accelerate repeated filesystem operations. Caching is **opt-in** and disabled by default.
+ragfs includes two caching backends, both opt-in and disabled by default.
 
-### Enabling Cache
+### In-Memory LRU Cache
 
 ```go
 fsys := ragfs.New()
@@ -110,40 +131,40 @@ fsys := ragfs.New()
 // Enable with default settings (1000 entries, 30s TTL)
 fsys.EnableCache(ragfs.CacheConfig{})
 
-// Or customize the configuration
+// Or customize
 fsys.EnableCache(ragfs.CacheConfig{
-    MaxEntries: 500,              // Maximum entries per cache layer
-    TTL:        60 * time.Second, // Time-to-live for cached entries
+    MaxEntries: 500,
+    TTL:        60 * time.Second,
 })
 ```
 
-### Two-Layer Architecture
+The in-memory cache uses a two-layer design:
 
-The cache uses a two-layer design for maximum efficiency:
-
-1. **Layer 1 (Handler Cache)**: Caches the results of expensive handler calls (`[]fs.DirEntry`)
+1. **Layer 1 (Handler Cache)**: Caches handler results (`[]fs.DirEntry`)
 2. **Layer 2 (Content Cache)**: Caches extracted file content (`[]byte`)
 
-This architecture ensures both expensive operations (database queries, API calls) and content extraction are cached independently.
+### BoltDB Persistent Cache
+
+For caching that survives process restarts:
+
+```go
+err := fsys.EnableBoltDBCache(ragfs.BoltDBCacheConfig{
+    DBPath:     "/tmp/ragfs-cache.db",
+    MaxEntries: 1000,
+    TTL:        60 * time.Second,
+})
+defer fsys.CloseBoltDBCache()
+```
 
 ### Cache Invalidation
 
-Manually invalidate cached entries when your data changes:
-
 ```go
-// Invalidate a specific path
-fsys.Invalidate("/users/123")
-
-// Invalidate all paths with a prefix
-fsys.InvalidatePrefix("/users/")
-
-// Clear everything
-fsys.InvalidatePrefix("/")
+fsys.Invalidate("/users/123")     // Invalidate a specific path
+fsys.InvalidatePrefix("/users/")  // Invalidate all paths with a prefix
+fsys.InvalidatePrefix("/")        // Clear everything
 ```
 
 ### Performance Monitoring
-
-Track cache performance with built-in statistics:
 
 ```go
 stats := fsys.Stats()
@@ -154,50 +175,113 @@ fmt.Printf("Entries: %d, Evictions: %d\n", stats.Entries.Load(), stats.Evictions
 
 ### Performance
 
-Benchmarks show significant performance improvements with caching enabled:
-
 - **8000x faster** for cached reads vs uncached (1.27ms → 157ns)
 - **~155ns** per cache hit operation
 - **Thread-safe** with minimal overhead for concurrent access
-- **Negligible TTL overhead** (~1-2ns per access)
 
 See `cache_bench_test.go` for detailed benchmarks.
 
-### Configuration Guidelines
+## Observability
 
-- **MaxEntries**: Set based on your working set size. Default 1000 is suitable for most applications.
-- **TTL**: Balance between data freshness and cache effectiveness. 0 means no expiry.
-- **Memory**: Each cache layer stores entries separately. Monitor with `Stats()`.
+ragfs automatically exposes runtime metrics via the `/_metrics` virtual filesystem:
+
+```
+/_metrics/
+├── version.txt       # API version
+├── summary.md        # Overall metrics summary
+├── cache/            # Cache hit rates, entries, evictions
+├── io/               # Bytes read/written, operation counts
+│   ├── bytes_read
+│   ├── bytes_written
+│   ├── read_ops
+│   └── write_ops
+└── errors/           # Error counts and recent errors
+```
+
+Access metrics programmatically or via FUSE:
+
+```go
+// Programmatic access
+snapshot := fsys.Collector().Snapshot()
+fmt.Printf("Read ops: %d, Bytes read: %d\n", snapshot.ReadOps, snapshot.BytesRead)
+
+// Via FUSE mount
+// cat /tmp/ragfs/_metrics/summary.md
+// cat /tmp/ragfs/_metrics/io/bytes_read
+```
 
 ## FUSE Integration
 
-Mount ragfs as a real filesystem:
+Mount ragfs as a real filesystem with full read/write support:
 
 ```bash
-# Build the mount program
+# Build and mount the JSON example
 go build -o ragfs-mount ./examples/json
-
-# Create mount point
-mkdir /tmp/ragfs
-
-# Mount the filesystem
 ./ragfs-mount -mount /tmp/ragfs -config config.json
 
-# Access your data as files
+# Read files
 cat /tmp/ragfs/app/name
-cat /tmp/ragfs/database/host
+ls /tmp/ragfs/database/
+
+# Write operations (with writable handlers)
+echo "hello" > /tmp/writable/test.txt
+mkdir /tmp/writable/mydir
+rm /tmp/writable/test.txt
 ```
+
+The FUSE bridge supports: file read/write, create, delete, rename, mkdir, rmdir, and truncate.
 
 See [FUSE.md](FUSE.md) for complete installation and usage instructions.
 
 ## Examples
 
-See `examples_test.go` for complete examples including:
-- Mapping paths to JSON data
-- Email retrieval with date parameters
-- Nested JSON structure navigation
+### JSON Configuration (`examples/json/`)
 
-Run tests to see examples in action:
+Maps a JSON config file to filesystem paths:
+
+```bash
+go run examples/json/main.go -mount /tmp/json -config config.json
+cat /tmp/json/app/name        # Read config values
+cat /tmp/json/_metrics/summary.md  # View metrics
+```
+
+### SQLite Database (`examples/sqlite/`)
+
+Maps SQLite tables and rows to filesystem paths:
+
+```bash
+go run examples/sqlite/main.go -mount /tmp/sqlite -db example.db
+ls /tmp/sqlite/users/          # List table rows
+cat /tmp/sqlite/users/1.json   # Read a row as JSON
+cat /tmp/sqlite/users/_metrics/row_count  # Table metrics
+```
+
+Supports optional BoltDB persistent caching with the `-cache` flag.
+
+### Writable Filesystem (`examples/writable/`)
+
+An in-memory writable filesystem demonstrating full CRUD:
+
+```bash
+go run examples/writable/main.go -mount /tmp/writable
+echo "hello" > /tmp/writable/test.txt
+cat /tmp/writable/test.txt
+mkdir /tmp/writable/mydir
+rm /tmp/writable/test.txt
+```
+
+### Cache Examples (`examples/lru-cache/`, `examples/boltdb-cache/`)
+
+Programmatic demonstrations of the caching subsystems:
+
+```bash
+go run examples/lru-cache/main.go     # In-memory LRU cache demo
+go run examples/boltdb-cache/main.go  # BoltDB persistent cache demo
+```
+
+### Test Examples
+
+See `examples_test.go` for additional examples including path parameter extraction and nested JSON navigation.
 
 ```bash
 go test -v
@@ -221,16 +305,17 @@ See `CLAUDE.md` for detailed development guidelines.
 
 **Active Development** - Core functionality implemented and tested:
 - ✅ Pattern-based routing with parameter extraction
-- ✅ fs.FS interface implementation
-- ✅ File content reading
-- ✅ JSON mapping example
+- ✅ `fs.FS` interface implementation
+- ✅ Handler interface with read/write operations
+- ✅ `DefaultHandler` and `NewReadOnlyHandler` convenience types
+- ✅ Write operations (WriteFile, Remove, Rename, Mkdir, Rmdir, Truncate)
+- ✅ FUSE support for all read and write operations
 - ✅ High-performance in-memory LRU cache with TTL
+- ✅ BoltDB persistent cache
 - ✅ Cache invalidation (single path and prefix-based)
 - ✅ Cache statistics and monitoring
-- 🚧 Directory listing (ReadDir) - planned
-- 🚧 Most-specific route matching - planned
-- 🚧 Wildcard patterns - planned
-- 🚧 BoltDB cache adapter - planned
+- ✅ `/_metrics` virtual filesystem for observability
+- ✅ JSON, SQLite, and writable filesystem examples
 
 ## License
 
